@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>連線測試</title>
+<style>
+ body{font:16px -apple-system,system-ui,sans-serif;margin:16px;background:#fff;color:#111}
+ button{display:block;width:100%;font-size:17px;padding:12px;margin:10px 0;border-radius:10px;border:1px solid #888;background:#f3f3f3}
+ pre{white-space:pre-wrap;background:#f6f6f6;padding:10px;border-radius:8px;font-size:13px}
+ @media (prefers-color-scheme:dark){body{background:#111;color:#eee}button{background:#222;color:#eee}pre{background:#1d1d1d}}
+</style></head><body>
+<h3>值班 App 連線測試（不含病人資料）</h3>
+<p>Apps Script 網址：</p>
+<input id="u" style="width:100%;font-size:14px;padding:8px" placeholder="https://script.google.com/macros/s/.../exec">
+<button id="g">1. 測試讀取（GET）</button>
+<button id="p">2. 測試送出（POST）</button>
+<button id="s">3. 測試手機儲存（寫入）</button>
+<button id="r">4. 讀回手機儲存（切到 LINE 再回來後按）</button>
+<pre id="o">結果會顯示在這裡</pre>
+<script>
+const o=document.getElementById('o'), u=document.getElementById('u');
+const log=m=>{o.textContent=new Date().toLocaleTimeString()+'  '+m+'\n'+o.textContent};
+try{u.value=localStorage.getItem('execUrl')||''}catch(e){}
+u.onchange=()=>{try{localStorage.setItem('execUrl',u.value.trim())}catch(e){}};
+document.getElementById('g').onclick=async()=>{try{const r=await fetch(u.value.trim());log('GET '+r.status+' '+await r.text())}catch(e){log('GET 失敗: '+e)}};
+document.getElementById('p').onclick=async()=>{try{const r=await fetch(u.value.trim(),{method:'POST',headers:{'Content-Type':'text/plain'},body:'hello'});log('POST '+r.status+' '+await r.text())}catch(e){log('POST 失敗: '+e)}};
+function db(){return new Promise((ok,no)=>{const q=indexedDB.open('probe',1);q.onupgradeneeded=()=>q.result.createObjectStore('kv');q.onsuccess=()=>ok(q.result);q.onerror=()=>no(q.error)})}
+document.getElementById('s').onclick=async()=>{try{let p='n/a';if(navigator.storage&&navigator.storage.persist)p=await navigator.storage.persist();const d=await db();const v='saved '+new Date().toLocaleString();await new Promise((ok,no)=>{const t=d.transaction('kv','readwrite');t.objectStore('kv').put(v,'x');t.oncomplete=ok;t.onerror=()=>no(t.error)});log('寫入成功：'+v+'（persist='+p+'，主畫面模式='+(navigator.standalone===true)+'）')}catch(e){log('寫入失敗: '+e)}};
+document.getElementById('r').onclick=async()=>{try{const d=await db();const v=await new Promise((ok,no)=>{const q=d.transaction('kv').objectStore('kv').get('x');q.onsuccess=()=>ok(q.result);q.onerror=()=>no(q.error)});log('讀回：'+(v||'（空的）'))}catch(e){log('讀回失敗: '+e)}};
+</script>
+</body></html>
