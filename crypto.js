@@ -300,7 +300,37 @@
     } catch (e) { return null; }
   }
 
+  /* 待辦清單 notes and recorded audio: generic bytes under the same recipe, with the subkey label given by info.
+   * Plaintext = 4-byte big-endian length + data + zero padding to a multiple of 256 bytes. */
+  function sealBytes(ikm, bytes, info) {
+    const n = bytes.length, pt = new Uint8Array(Math.ceil((n + 4) / 256) * 256);
+    pt.set([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255], 0);
+    pt.set(bytes, 4);
+    const dk = hkdf(ikm, new Uint8Array(0), utf8(info), 64), nonce = G.crypto.getRandomValues(new Uint8Array(12));
+    const ct = chacha(dk.subarray(0, 32), nonce, pt), mac = hmac(dk.subarray(32), cat(nonce, ct));
+    dk.fill(0); pt.fill(0);
+    return {v: 2, n: b64e(nonce), c: b64e(ct), m: b64e(mac)};
+  }
+  /* -> Uint8Array (the plaintext, caller wipes it) or null (wrong key, tampered, malformed); never throws */
+  function openBytes(ikm, box, info) {
+    try {
+      if (!ikm || !box || box.v !== 2 || typeof box.n !== 'string' || typeof box.c !== 'string' || typeof box.m !== 'string') return null;
+      const nonce = b64d(box.n), ct = b64d(box.c), mac = b64d(box.m);
+      if (nonce.length !== 12) return null;
+      const dk = hkdf(ikm, new Uint8Array(0), utf8(info), 64);
+      const pt = eq(hmac(dk.subarray(32), cat(nonce, ct)), mac) ? chacha(dk.subarray(0, 32), nonce, ct) : null;
+      dk.fill(0);
+      if (!pt || pt.length < 4) return null;
+      const n = ((pt[0] << 24) >>> 0) + (pt[1] << 16) + (pt[2] << 8) + pt[3];
+      if (n > pt.length - 4) { pt.fill(0); return null; }
+      const out = pt.slice(4, 4 + n);
+      pt.fill(0);
+      return out;
+    } catch (e) { return null; }
+  }
+
   const api = {b64d, b64e, b64ud, b64ue, sha256, hmac, pbkdf2, chacha, hkdf, deriveKek, accountId, sealChecks, openChecks,
+               sealBytes, openBytes,
                x25519Pub, openSealed, sealBox, decryptV3X, decryptV3Pw, decryptV3PwKek, decryptV3Kek, normPass, authFromKek,
                openGrant, sealGrant, proofV3, confirmCode, prfSalt, period, ITERATIONS_PW, MAX_IT};
   Object.assign(G, api);

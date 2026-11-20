@@ -1,32 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <!-- 值班 app icon: winged hourglass ("Kairos" — catch the moment). Original artwork. -->
-  <rect width="1024" height="1024" fill="#D65A52"/>
-  <defs>
-    <g id="wing">
-      <!-- feathers fan out to the left from the hourglass waist (origin at 0,0) -->
-      <path d="M0,-40 C-90,-150 -250,-230 -380,-235 C-300,-170 -200,-110 -60,-30 Z" fill="#FFF6E6"/>
-      <path d="M0,-10 C-110,-90 -270,-130 -400,-120 C-310,-70 -200,-30 -50,10 Z" fill="#FFF6E6"/>
-      <path d="M0,20 C-110,-20 -250,-20 -360,10 C-270,40 -170,60 -40,45 Z" fill="#FFF6E6"/>
-      <path d="M0,45 C-90,40 -200,70 -280,115 C-190,120 -110,105 -30,70 Z" fill="#FFF6E6"/>
-      <!-- feather lines -->
-      <path d="M-70,-60 C-160,-130 -260,-180 -330,-200" stroke="#E9C9A8" stroke-width="10" fill="none" stroke-linecap="round"/>
-      <path d="M-70,-25 C-170,-70 -270,-100 -350,-110" stroke="#E9C9A8" stroke-width="10" fill="none" stroke-linecap="round"/>
-      <path d="M-70,15 C-160,0 -240,5 -310,15" stroke="#E9C9A8" stroke-width="10" fill="none" stroke-linecap="round"/>
-    </g>
-  </defs>
-  <g transform="translate(512,520) scale(0.84) translate(-512,-520)">
-  <!-- wings -->
-  <use href="#wing" transform="translate(452,520)"/>
-  <use href="#wing" transform="translate(572,520) scale(-1,1)"/>
-  <!-- hourglass frame: top and bottom bars -->
-  <rect x="352" y="232" width="320" height="44" rx="22" fill="#FFF6E6"/>
-  <rect x="352" y="764" width="320" height="44" rx="22" fill="#FFF6E6"/>
-  <!-- glass -->
-  <path d="M392,276 L632,276 C632,380 560,450 530,520 C560,590 632,660 632,764 L392,764 C392,660 464,590 494,520 C464,450 392,380 392,276 Z"
-        fill="#B8443D" stroke="#FFF6E6" stroke-width="22" stroke-linejoin="round"/>
-  <!-- sand: remaining top, falling stream, pile bottom -->
-  <path d="M432,330 L592,330 C580,400 540,450 512,500 C484,450 444,400 432,330 Z" fill="#F3D54A"/>
-  <rect x="505" y="500" width="14" height="180" rx="7" fill="#F3D54A"/>
-  <path d="M420,742 C440,680 480,650 512,640 C544,650 584,680 604,742 Z" fill="#F3D54A"/>
-</g>
+  <!-- 值班 app icon: painted brush burst on warm paper. Original artwork. -->
+  <rect width="1024" height="1024" fill="#F5F0E6"/>
+  <circle cx="512" cy="512" r="108" fill="#C96442"/>
+  <path d="M581.2,522.8 Q700.2,539.4 818.7,559.2" stroke="#E9B89B" stroke-width="112" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M564.1,558.8 Q653.7,640.3 744.1,720.9" stroke="#E9B89B" stroke-width="96" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M529.7,579.7 Q573.1,701.2 599.0,827.3" stroke="#E9B89B" stroke-width="94" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M493.9,579.6 Q485.9,711.2 437.2,831.8" stroke="#E9B89B" stroke-width="107" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M456.2,554.3 Q344.8,630.4 239.9,714.9" stroke="#E9B89B" stroke-width="106" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M442.9,523.1 Q347.7,564.2 246.0,565.2" stroke="#E9B89B" stroke-width="104" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M447.9,483.8 Q347.6,441.9 248.6,397.0" stroke="#E9B89B" stroke-width="93" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M474.8,452.7 Q412.4,338.0 339.1,230.1" stroke="#E9B89B" stroke-width="103" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M513.2,442.0 Q502.6,318.0 512.3,194.3" stroke="#E9B89B" stroke-width="102" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M553.7,455.8 Q644.2,353.8 719.4,240.4" stroke="#E9B89B" stroke-width="110" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M575.6,482.8 Q663.8,415.2 768.4,383.6" stroke="#E9B89B" stroke-width="98" stroke-linecap="round" fill="none" opacity="0.75"/><path d="M576.0,511.7 Q714.1,509.4 852.3,509.7" stroke="#D97757" stroke-width="98" stroke-linecap="round" fill="none" opacity="1"/><path d="M565.8,546.6 Q682.5,622.4 799.7,697.5" stroke="#D97757" stroke-width="82" stroke-linecap="round" fill="none" opacity="1"/><path d="M537.8,570.6 Q605.6,700.8 659.6,837.2" stroke="#D97757" stroke-width="80" stroke-linecap="round" fill="none" opacity="1"/><path d="M505.5,575.7 Q512.4,724.3 484.3,869.3" stroke="#D97757" stroke-width="93" stroke-linecap="round" fill="none" opacity="1"/><path d="M467.8,558.3 Q358.3,664.9 255.3,777.7" stroke="#D97757" stroke-width="92" stroke-linecap="round" fill="none" opacity="1"/><path d="M451.2,532.1 Q345.4,589.5 228.8,614.7" stroke="#D97757" stroke-width="90" stroke-linecap="round" fill="none" opacity="1"/><path d="M450.1,495.9 Q327.0,465.6 204.6,432.7" stroke="#D97757" stroke-width="79" stroke-linecap="round" fill="none" opacity="1"/><path d="M469.8,463.9 Q377.1,347.9 276.2,239.1" stroke="#D97757" stroke-width="89" stroke-linecap="round" fill="none" opacity="1"/><path d="M502.9,448.7 Q472.2,309.8 458.3,168.5" stroke="#D97757" stroke-width="88" stroke-linecap="round" fill="none" opacity="1"/><path d="M541.4,455.2 Q621.1,323.2 686.6,183.8" stroke="#D97757" stroke-width="96" stroke-linecap="round" fill="none" opacity="1"/><path d="M565.2,476.4 Q658.7,389.0 770.5,329.1" stroke="#D97757" stroke-width="84" stroke-linecap="round" fill="none" opacity="1"/><path d="M581.9,508.2 Q681.8,501.7 781.9,496.8" stroke="#B5503A" stroke-width="44" stroke-linecap="round" fill="none" opacity="0.8"/><path d="M543.4,574.6 Q597.2,669.0 642.9,767.5" stroke="#B5503A" stroke-width="36" stroke-linecap="round" fill="none" opacity="0.8"/><path d="M466.3,565.0 Q388.8,649.7 315.3,737.8" stroke="#B5503A" stroke-width="42" stroke-linecap="round" fill="none" opacity="0.8"/><path d="M443.5,497.8 Q356.4,480.8 269.7,462.1" stroke="#B5503A" stroke-width="35" stroke-linecap="round" fill="none" opacity="0.8"/><path d="M498.6,443.3 Q472.4,342.6 456.3,239.9" stroke="#B5503A" stroke-width="40" stroke-linecap="round" fill="none" opacity="0.8"/><path d="M568.2,470.2 Q631.6,407.6 706.8,360.9" stroke="#B5503A" stroke-width="38" stroke-linecap="round" fill="none" opacity="0.8"/>
+  <circle cx="512" cy="512" r="92" fill="#C96442"/>
+  <circle cx="512" cy="512" r="40" fill="#F5F0E6" opacity=".9"/>
 </svg>

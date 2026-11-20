@@ -47,7 +47,12 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v6';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v11';   // keep equal to SHELL_V in sw.js
+const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
+let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
+let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
+let REC = null, RECCHUNKS = [], RECT0 = 0;   // MediaRecorder in progress (memory only, dropped on lock)
+let AUDIO = null;     // element that is playing a recording (stopped on lock)
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[‪-‮⁦-⁩]/g, '')
@@ -83,32 +88,53 @@ function recalc() {
   return changed;
 }
 
+const TAB_TITLE = {pri: '優先', all: '全部', todo: '待辦'};
+/* 待辦 tab: the indexes of the patients whose note is marked 待辦 (left swipe), in P order */
+const todoIdx = () => (P || []).map((p, i) => i).filter(i => (NOTES[P[i].chart] || {}).todo === true);
 function renderTabs() {
-  const open = splitItems(ITEMS, CHECKS).open.length;
+  const open = patientGroups().filter(x => !x.done).length, td = todoIdx().length;
   $('.tb [data-tab=pri]').innerHTML = '優先' + (open ? `<span class="ct">${open}</span>` : '');
   $('.tb [data-tab=all]').textContent = `全部 ${P.length}`;
+  $('.tb [data-tab=todo]').innerHTML = '待辦' + (td ? `<span class="ct">${td}</span>` : '');
   document.querySelectorAll('.tb button').forEach(b => b.classList.toggle('on', b.dataset.tab === st.tab));
-  $('#ttl').textContent = st.tab === 'pri' ? '優先' : '全部';
+  $('#ttl').textContent = TAB_TITLE[st.tab] || '優先';
 }
 function showTab(t) {
   st.tab = t;
   $('#pri').style.display = t === 'pri' ? '' : 'none';
   $('#all').style.display = t === 'all' ? '' : 'none';
+  $('#todo').style.display = t === 'todo' ? '' : 'none';
   renderTabs();
-  if (t === 'pri') renderPri(); else renderAll();
+  if (t === 'pri') renderPri(); else if (t === 'todo') renderTodo(); else renderAll();
 }
 
+/* one row per patient: all of that patient's priority items as chips; done when every item is ticked */
+function patientGroups() {
+  const by = new Map();
+  ITEMS.forEach(it => { if (!by.has(it.pi)) by.set(it.pi, []); by.get(it.pi).push(it); });
+  return Array.from(by.entries()).map(([pi, its]) => ({pi: pi, its: its, g: Math.min(...its.map(it => it.g)),
+                                                       done: its.every(it => CHECKS.includes(it.id))}));
+}
 function renderPri() {
   const el = $('#pri');
   if (!ITEMS.length) { el.innerHTML = '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
-  const {open, done} = splitItems(ITEMS, CHECKS);
-  const row = (it, d) => { const p = P[it.pi] || {};
-    return `<div class="ck${d ? ' done' : ''}" role="checkbox" aria-checked="${d}" tabindex="0" data-id="${esc(it.id)}"><span class="cbx"></span><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span>${chipHtml(it)}<span class="sp"></span><button class="go" type="button" data-go="${Number(it.pi)}" aria-label="開啟病人頁">›</button></div>`; };
-  let h = `<div class="pg"><span>${done.length} / ${ITEMS.length}</span><div class="pgb"><span style="width:${Math.round(done.length / ITEMS.length * 100)}%"></span></div></div>`;
-  GROUPS.forEach(g => { const rows = open.filter(i => i.g === g.g);
-    if (rows.length) h += `<div class="gh g${g.g}"><i></i>${g.name} · ${rows.length}</div>` + rows.map(i => row(i, false)).join(''); });
-  if (done.length) h += `<div class="donehd">已處理 ${done.length}</div>` + done.map(i => row(i, true)).join('');
+  const groups = patientGroups(), open = groups.filter(x => !x.done), done = groups.filter(x => x.done);
+  const row = x => { const p = P[x.pi] || {};
+    return `<div class="ck${x.done ? ' done' : ''}" role="checkbox" aria-checked="${x.done}" tabindex="0" data-pi="${Number(x.pi)}"><span class="cbx"></span><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="pchips">${x.its.map(chipHtml).join('')}</span><span class="sp"></span><button class="go" type="button" data-go="${Number(x.pi)}" aria-label="開啟病人頁">›</button></div>`; };
+  let h = `<div class="pg"><span>${done.length} / ${groups.length} 人</span><div class="pgb"><span style="width:${Math.round(done.length / groups.length * 100)}%"></span></div></div>`;
+  GROUPS.forEach(g => { const rows = open.filter(x => x.g === g.g);
+    if (rows.length) h += `<div class="gh g${g.g}"><i></i>${g.name} · ${rows.length}</div>` + rows.map(row).join(''); });
+  if (done.length) h += `<div class="donehd">已處理 ${done.length}</div>` + done.map(row).join('');
   el.innerHTML = h;
+}
+/* tick / untick every priority item of one patient (one row = one patient) */
+function togglePatient(pi) {
+  const ids = ITEMS.filter(it => it.pi === pi).map(it => it.id);
+  const all = ids.length > 0 && ids.every(id => CHECKS.includes(id));
+  CHECKS = all ? CHECKS.filter(id => !ids.includes(id)) : CHECKS.concat(ids.filter(id => !CHECKS.includes(id)));
+  renderPri(); renderTabs();
+  if ($('#detail').style.display === 'block' && st.cur >= 0) renderPend(st.order[st.cur]);
+  return saveChecks();
 }
 
 function renderAll() {
@@ -252,9 +278,15 @@ function renderDetail(i, from) {
   $('#back').textContent = st.from === 'pri' ? '‹ 優先' : '‹ 全部';
   $('#dt').textContent = `${st.cur + 1} / ${st.order.length}`;
   const labs = Array.isArray(p.labs) ? p.labs : [], its = ITEMS.filter(it => it.pi === i), notes = Array.isArray(p.notes) ? p.notes : [];
-  const props = [['病歷號', esc(p.chart)], ['科別', `${esc(p.dept)} · ${esc(p.zone)}`], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['標記', tags(p)]].filter(r => r[1]);
+  const wt = p.wt && p.wt.kg != null ? `${esc(p.wt.kg)} kg${p.wt.delta != null ? ` <small>${Number(p.wt.delta) > 0 ? '+' : ''}${esc(p.wt.delta)}</small>` : ''}` : '';
+  /* IO: day's input / output in ml, the difference in brackets (1000 ml or more = red, as on the HIS handoff page) */
+  const io = p.io && p.io.in != null ? `${esc(p.io.in)} / ${esc(p.io.out)} ml <small${Math.abs(Number(p.io.diff)) > 1000 ? ' class="gv"' : ''}>(${Number(p.io.diff) > 0 ? '+' : ''}${esc(p.io.diff)})</small>` : '';
+  /* UO: urine output of the day in ml (sql_0035 urine rows only; not the same as the total output above) */
+  const uo = p.uo != null ? `${esc(p.uo)} ml` : '';
+  const props = [['病歷號', esc(p.chart)], ['科別', `${esc(p.dept)} · ${esc(p.zone)}`], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['體重', wt], ['IO 入/出', io], ['UO 尿量（今日）', uo], ['標記', tags(p)]].filter(r => r[1]);
   let h = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2></div>
   <dl class="props">${props.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>
+  <div class="swh">左滑：加入待辦 ・ 右滑：沒什麼問題（可復原）</div>
   <div class="blk" id="pend"></div>
   <div class="blk"><h3>生命徵象 · 72 小時</h3><div id="vsbox"></div><div class="rd" id="read"></div></div>`;
   const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };
@@ -264,16 +296,22 @@ function renderDetail(i, from) {
   const objs = a => Array.isArray(a) ? a.filter(x => x && typeof x === 'object') : [];     // a null entry must not break the page
   const micro = p.micro && typeof p.micro === 'object' ? Object.entries(p.micro) : [];
   const nMicro = micro.reduce((n, e) => n + objs(e[1]).length, 0);
-  const cx = micro.map(([k, rows]) => `<div class="row k">${esc(k)}</div><div class="mg">${objs(rows).map(r => `<span class="st">${r.pos ? `<span class="chip g3">${esc(r.t)}</span>` : esc(r.t)}</span><span>${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`).join('')}</div>`).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
-  const today = Array.isArray(p.today) ? p.today : [], meds = objs(p.meds), others = Array.isArray(p.others) ? p.others : [];
+  /* culture results in one box per kind (細菌 / 病毒 / ...): left = status, right = the full HIS item name */
+  const cbox = (title, n, inner) => inner ? `<div class="cbox"><div class="cbt">${esc(title)}<small>${n}</small></div>${inner}</div>` : '';
+  const cx = micro.filter(([, rows]) => objs(rows).length).map(([k, rows]) => cbox(k, objs(rows).length, `<div class="mg">${objs(rows).map(r => `<span class="st">${r.pos ? `<span class="chip g3">${esc(r.t)}</span>` : esc(r.t)}</span><span class="it">${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`).join('')}</div>`)).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
+  const today = Array.isArray(p.today) ? p.today : [];
+  /* drugs: the flagged ones (meds) and the other active drugs (others) in one list, boxed by pharmacy category */
+  const drugs = objs(p.meds).concat(objs(p.others)), PHARM = ['抗生素', '止痛藥', '抗凝血·抗血小板', '抗癌藥', '類固醇', '升壓劑', '腸胃藥', '其他'];
+  const drugLi = m => `<li>${esc(m.n)}${m.freq ? ` <span class="sub">q${esc(m.freq)}</span>` : ''}${m.d ? ` <span class="sub">D${esc(m.d)}</span>` : ''}</li>`;
+  const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (m.cat || '其他') === c); return L.length ? cbox(c, L.length, `<ul class="dl">${L.map(drugLi).join('')}</ul>`) : ''; }).join('');
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
      + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
-     + fold('目前處方', meds.length + others.length, (meds.length || others.length) ? `<ul>${meds.map(m => `<li><span class="sub">[${esc(m.c)}]</span> ${esc(m.n)}${m.d ? ' D' + esc(m.d) : ''}</li>`).join('')}${others.map(o => `<li class="sub">${esc(o)}</li>`).join('')}</ul>` : '', false)
+     + fold('目前處方', drugs.length, drugBoxes, true)
      + fold('交班與交代事項', '', p.memo ? `<div class="memo">${esc(p.memo)}</div>` : '', true)
      + fold('護理紀錄', p.nurs ? p.nurs.w : '', p.nurs ? `<div class="memo">${esc(p.nurs.t)}</div>` : '', false);
   h += '<div class="pn2"><button id="prev" type="button">‹ 上一位</button><button id="next" type="button">下一位 ›</button></div>';
   $('#db').innerHTML = h;
-  renderPend(i); renderStrips(p); bindStrips(p);
+  renderPend(i); renderStrips(p); bindStrips(p); bindSwipe(p.chart);
   $('#prev').disabled = st.cur <= 0; $('#next').disabled = st.cur >= st.order.length - 1;
   $('#prev').onclick = () => go(-1); $('#next').onclick = () => go(1);
   $('#detail').style.display = 'block'; $('#detail').scrollTop = 0; document.body.style.overflow = 'hidden';
@@ -303,7 +341,8 @@ document.addEventListener('click',e=>{
  const tb=t.closest('[data-tab]');if(tb){showTab(tb.dataset.tab);window.scrollTo(0,0);return}
  const z=t.closest('[data-z]');if(z){st.zone=z.dataset.z;renderAll();return}
  const gb=t.closest('[data-go]');if(gb){renderDetail(+gb.dataset.go,'pri');return}
- const ck=t.closest('.ck');if(ck){toggleCheck(ck.dataset.id);return}
+ const ck=t.closest('.ck');if(ck){if(ck.dataset.pi!==undefined)togglePatient(+ck.dataset.pi);else toggleCheck(ck.dataset.id);return}
+ const tdo=t.closest('.tdo');if(tdo){openNote(+tdo.dataset.note);return}
  const pr=t.closest('.pr');if(pr){renderDetail(+pr.dataset.i,'all');return}
  if(t.closest('#mn')){openMenu();return}
  const ac=t.closest('[data-act]');
@@ -885,6 +924,8 @@ async function start(d) {
   const ticks = await loadChecks();
   if (!D) return;                                         // locked while the ticks were loading
   CHECKS = pruneChecks(ticks, ITEMS);                     // against the items as they are now (a sync may have replaced the data meanwhile)
+  NOTES = await loadNotes();                              // 待辦 notes: sealed with the same keys as the ticks
+  if (!D) return;                                         // locked while the notes were loading
   show('#list');
   showTab('pri');
   renderSys();
@@ -902,11 +943,16 @@ function lock() {
   if (AUTH) AUTH.fill(0);
   KEYS = null; KEK = null; AUTH = null; USER = null; LOGIN_KEY = null; D = null; P = null; PENDING = null;
   ITEMS = []; CHECKS = []; REQ_SENDING = false;
+  NOTES = {}; UNDO = null; NOTE_I = -1; SW0 = null;
+  if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }   // onstop sees the new session and keeps nothing
+  REC = null; RECCHUNKS = [];
+  if (AUDIO) { AUDIO.pause(); AUDIO = null; }
   BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};
   st = newSt();
-  ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
+  ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#todo', '#npd'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
+  $('#np').style.display = 'none'; document.body.style.overflow = '';
   $('#q').value = ''; $('#lp').value = ''; $('#lu').value = ''; REQ_MSG = '';
-  $('.tb [data-tab=pri]').textContent = '優先'; $('.tb [data-tab=all]').textContent = '全部';
+  $('.tb [data-tab=pri]').textContent = '優先'; $('.tb [data-tab=all]').textContent = '全部'; $('.tb [data-tab=todo]').textContent = '待辦';
   ['#menu', '#dlg', '#toast'].forEach(s => $(s).classList.remove('on'));
   $('#detail').style.display = 'none'; document.body.style.overflow = ''; hist('');
   if (!REG || REG.state !== 'ok') return;
@@ -952,6 +998,205 @@ $('#pcan').onclick = cancelEnroll;
 $('#clr').onclick = clearLocal;
 $('#bretry').onclick = retryBoot;
 $('#swpw').onclick = () => { const f = $('#pf'); f.style.display = f.style.display === 'none' ? '' : 'none'; };
+
+/* ================= 待辦清單: to-do notes, recordings, swipe, undo ================= */
+/* NOTES = {chart: {todo, items, audio}} sealed as one blob (key "notes"); each recording is its own sealed blob ("audio:<id>").
+ * Both use the tick subkey recipe (crypto.js sealBytes, label NOTE_INFO). Lock wipes the memory copy; 清除本機 drops the DB. */
+const NOTE_ID = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+let NOTE_I = -1;        // patient index of the open notepad
+let SW0 = null;         // touch start of a horizontal swipe on the patient page
+async function loadNotes() {
+  let rec = null;
+  try { rec = await loadBlob('notes'); } catch (e) { rec = null; }
+  if (!rec || !REG || rec.mode !== REG.mode) return {};
+  const ikm = REG.mode === 'x' ? (KEYS && own(KEYS, rec.p) ? KEYS[rec.p] : null) : KEK;
+  const pt = openBytes(ikm, rec, NOTE_INFO);
+  if (!pt) return {};
+  let o = null;
+  try { o = JSON.parse(new TextDecoder().decode(pt)); } catch (e) { o = null; }
+  pt.fill(0);
+  return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+}
+async function saveNotes() {
+  const k = checksKey();
+  if (!k) return;
+  const raw = new TextEncoder().encode(JSON.stringify(NOTES));
+  const box = sealBytes(k.ikm, raw, NOTE_INFO);
+  raw.fill(0);
+  box.mode = k.mode; box.p = k.p;
+  try { await saveBlob(box, 'notes'); } catch (e) { /* kept in memory only */ }
+}
+function putNote(chart, patch) { NOTES[chart] = Object.assign({}, NOTES[chart] || {}, patch); saveNotes(); }
+const noteItems = chart => Array.isArray((NOTES[chart] || {}).items) ? NOTES[chart].items : [];
+const noteAudio = chart => Array.isArray((NOTES[chart] || {}).audio) ? NOTES[chart].audio : [];
+
+/* left swipe = 加入待辦, right swipe = 沒什麼問題; a short horizontal drag only, so scrolling is unaffected */
+function bindSwipe(chart) {
+  const el = $('#db');
+  el.ontouchstart = e => { const t = e.touches[0]; SW0 = {x: t.clientX, y: t.clientY, t: Date.now()}; };
+  el.ontouchend = e => {
+    const s = SW0; SW0 = null;
+    if (!s || !e.changedTouches.length) return;
+    const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (Date.now() - s.t > 700 || Math.abs(dx) < 80 || Math.abs(dx) < Math.abs(dy) * 2) return;
+    setTodo(chart, dx < 0);
+  };
+}
+function setTodo(chart, on) {
+  if (!chart) return;
+  const cur = NOTES[chart] || {};
+  if ((cur.todo === true) === on) { toast(on ? '已在待辦清單' : '已是沒什麼問題'); return; }
+  UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null};
+  putNote(chart, {todo: on});
+  renderTodo(); renderTabs();
+  toastUndo(on ? '已加入待辦' : '沒什麼問題');
+}
+function undoNotes() {
+  const u = UNDO;
+  if (!u) return;
+  UNDO = null;
+  if (u.before == null) delete NOTES[u.chart]; else NOTES[u.chart] = JSON.parse(u.before);
+  saveNotes(); renderTodo(); renderTabs();
+  $('#toast').classList.remove('on');
+}
+/* toast with a 復原 button for 5 s (the pointer-events of the button are re-enabled in the CSS) */
+function toastUndo(text) {
+  const t = $('#toast');
+  t.innerHTML = `<span>${esc(text)}</span><button type="button" id="undo">復原</button>`;
+  t.classList.add('on');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => { t.classList.remove('on'); UNDO = null; }, 5000);
+  $('#undo').onclick = undoNotes;
+}
+
+/* 待辦 tab: identity, attending and the to-do text only */
+function renderTodo() {
+  const el = $('#todo');
+  if (!el || !P) return;
+  const idx = todoIdx();
+  if (!idx.length) { el.innerHTML = '<div class="empty">沒有待辦<small>在病人頁左滑即可加入待辦；右滑表示沒什麼問題</small></div>'; return; }
+  el.innerHTML = idx.map(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done);
+    return `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="id">${esc(p.chart)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
+  }).join('');
+}
+
+/* notepad page (checklist + recordings) */
+function openNote(i) {
+  if (!P || !P[i]) return;
+  NOTE_I = i;
+  $('#npt').textContent = `${P[i].bed} ${P[i].name}`;
+  $('#np').style.display = 'block'; document.body.style.overflow = 'hidden';
+  drawNote();
+}
+function closeNote() {
+  if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }
+  $('#np').style.display = 'none'; document.body.style.overflow = ''; NOTE_I = -1;
+  renderTodo(); renderTabs();
+}
+function drawNote() {
+  const p = P && P[NOTE_I];
+  if (!p) return;
+  const items = noteItems(p.chart), aud = noteAudio(p.chart);
+  $('#npd').innerHTML = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2><div class="sub">${esc(p.chart)} · 主治 ${esc(p.vs || '–')}</div></div>
+    <div class="blk"><h3>待辦事項</h3>
+      <form id="npf" class="npf" autocomplete="off"><input id="npi" type="text" maxlength="200" placeholder="新增待辦…"><button type="submit">加入</button></form>
+      <ul class="cl">${items.map(x => `<li class="${x.done ? 'done' : ''}"><span class="cbx" data-ntoggle="${esc(x.id)}" role="checkbox" aria-checked="${!!x.done}"></span><span class="nt">${esc(x.t)}</span><button type="button" class="nd" data-ndel="${esc(x.id)}" aria-label="刪除">×</button></li>`).join('')}</ul>
+    </div>
+    <div class="blk"><h3>錄音</h3>
+      <button id="rec" type="button" class="rec">${REC ? '■ 停止錄音' : '● 錄音'}</button>
+      <ul class="al">${aud.map(a => `<li><button type="button" class="pl" data-play="${esc(a.id)}">▶ ${fmtT(a.ts)} · ${Number(a.s) || 0} 秒</button><button type="button" class="nd" data-adel="${esc(a.id)}" aria-label="刪除錄音">×</button></li>`).join('')}</ul>
+    </div>`;
+}
+function addNoteItem(text) {
+  const p = P && P[NOTE_I], t = String(text == null ? '' : text).trim();
+  if (!p || !t) return;
+  putNote(p.chart, {items: noteItems(p.chart).concat([{id: NOTE_ID(), t: t.slice(0, 200), done: false}])});
+  drawNote();
+}
+function toggleNoteItem(id) {
+  const p = P && P[NOTE_I]; if (!p) return;
+  putNote(p.chart, {items: noteItems(p.chart).map(x => x.id === id ? Object.assign({}, x, {done: !x.done}) : x)});
+  drawNote();
+}
+function delNoteItem(id) {
+  const p = P && P[NOTE_I]; if (!p) return;
+  putNote(p.chart, {items: noteItems(p.chart).filter(x => x.id !== id)});
+  drawNote();
+}
+$('#npb').onclick = closeNote;
+$('#npd').addEventListener('submit', e => { if (e.target && e.target.id === 'npf') { e.preventDefault(); addNoteItem($('#npi').value); } });
+$('#npd').addEventListener('click', e => {
+  const t = e.target;
+  if (t.id === 'rec') { toggleRec(); return; }
+  const tg = t.closest('[data-ntoggle]'); if (tg) { toggleNoteItem(tg.dataset.ntoggle); return; }
+  const dl = t.closest('[data-ndel]'); if (dl) { delNoteItem(dl.dataset.ndel); return; }
+  const pl = t.closest('[data-play]'); if (pl) { playRec(pl.dataset.play); return; }
+  const ad = t.closest('[data-adel]'); if (ad) delRec(ad.dataset.adel);
+});
+
+/* recording: MediaRecorder; the blob is sealed before it is stored, and dropped when the session was locked meanwhile */
+async function toggleRec() {
+  if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } return; }
+  const p = P && P[NOTE_I];
+  if (!p) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') { toast('此瀏覽器不支援錄音'); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+  catch (e) { toast('無法使用麥克風（請在設定允許）'); return; }
+  const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+  const session = SESSION, chart = p.chart;
+  let rec;
+  try { rec = new MediaRecorder(stream, mime ? {mimeType: mime} : {}); }
+  catch (e) { stream.getTracks().forEach(t => t.stop()); toast('無法開始錄音'); return; }
+  RECCHUNKS = []; RECT0 = Date.now(); REC = rec;
+  rec.ondataavailable = e => { if (e.data && e.data.size) RECCHUNKS.push(e.data); };
+  rec.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    const type = rec.mimeType || mime || 'audio/webm', chunks = RECCHUNKS, secs = Math.max(1, Math.round((Date.now() - RECT0) / 1000));
+    REC = null; RECCHUNKS = [];
+    if (NOTE_I >= 0) drawNote();
+    if (session === SESSION && chunks.length) saveRecording(session, chart, new Blob(chunks, {type: type}), secs, type);
+  };
+  rec.start(1000);
+  drawNote();
+}
+async function saveRecording(session, chart, blob, secs, type) {
+  const k = checksKey();
+  if (!k) return;
+  const id = NOTE_ID();
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const box = sealBytes(k.ikm, bytes, NOTE_INFO);
+    bytes.fill(0);
+    box.mode = k.mode; box.p = k.p; box.mime = type;
+    if (session !== SESSION) return;                    // locked while encrypting: nothing is kept
+    await saveBlob(box, 'audio:' + id);
+    if (session !== SESSION) { try { await removeBlob('audio:' + id); } catch (e) { /* ignore */ } return; }
+    putNote(chart, {audio: noteAudio(chart).concat([{id: id, ts: Date.now(), s: secs, mime: type}])});
+  } catch (e) { toast('錄音儲存失敗'); return; }
+  if (NOTE_I >= 0) drawNote();
+}
+async function playRec(id) {
+  let box = null;
+  try { box = await loadBlob('audio:' + id); } catch (e) { box = null; }
+  const ikm = !box ? null : box.mode === 'x' ? (KEYS && own(KEYS, box.p) ? KEYS[box.p] : null) : KEK;
+  const pt = openBytes(ikm, box, NOTE_INFO);
+  if (!pt) { toast('無法開啟這段錄音'); return; }
+  const url = URL.createObjectURL(new Blob([pt], {type: box.mime || 'audio/webm'}));
+  pt.fill(0);
+  if (AUDIO) AUDIO.pause();
+  AUDIO = new Audio(url);
+  AUDIO.onended = () => URL.revokeObjectURL(url);
+  AUDIO.play().catch(() => toast('播放失敗'));
+}
+async function delRec(id) {
+  if (!await ask('刪除這段錄音？')) return;
+  const p = P && P[NOTE_I];
+  if (!p) return;
+  putNote(p.chart, {audio: noteAudio(p.chart).filter(a => a.id !== id)});
+  try { await removeBlob('audio:' + id); } catch (e) { /* ignore */ }
+  drawNote();
+}
 
 /* ================= boot ================= */
 async function boot() {
