@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v41';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v42';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -1261,7 +1261,8 @@ function parseImportRows(text) {
   endRow();
   return rows;
 }
-const impKey = s => String(s || '').toUpperCase().replace(/[\s\-_]/g, '').replace(/^0+(?=\d)/, '');
+/* W34-011 = W34-11 = w34－011: case, spaces and leading zeros of each number are ignored (the handoff doc mixes both) */
+const impKey = s => String(s || '').toUpperCase().replace(/[－–—_]/g, '-').replace(/\s+/g, '').replace(/\d+/g, n => n.replace(/^0+(?=\d)/, ''));
 function importSpecial(text) {
   if (!P || !P.length) return {ok: 0, dup: 0, miss: 0, rows: 0};
   const byKey = new Map();
