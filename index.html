@@ -8,146 +8,238 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="值班">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="theme-color" content="#D65A52">
+<meta name="theme-color" content="#F5F4EE" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="icon" href="icon-192.png" type="image/png">
 <title>值班</title>
 <style>
-/* layout + colours ported as-is from booklet_app.TEMPLATE; PWA-only additions are marked "pwa" */
-:root{--bg:#f6f6f4;--card:#fff;--ink:#1d1d1b;--sub:#6b6b66;--line:#e2e2dd;--acc:#8E3B46;--accbg:#F3DADD;--tag:#3F3F3F;--new:#EAD9A6;--newink:#4a3a10;--tp:#b81c1c;--hr:#1a33bf;--rr:#198033;--grid:#d6d6d0}
-@media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1f1f1d;--ink:#ecece8;--sub:#9a9a93;--line:#34342f;--acc:#d9808c;--accbg:#3a2226;--tag:#5a5a55;--new:#5b4c1e;--newink:#f1e2b0;--tp:#ff6b6b;--hr:#7f95ff;--rr:#5fd07e;--grid:#3a3a35}}
+/* 暖紙 (warm paper): tokens from docs/ui-redesign/spec.md section 4. System fonts only (CSP). Vertical scrolling only. */
+:root{--bg:#F5F4EE;--surf:#FFFFFF;--ink:#1F1E1D;--sub:#77736A;--line:#E2DED3;--line2:#ECE9E0;--seg:#EAE7DD;--acc:#C96442;--boxc:#B9B3A6;--band:#E9E4D6;--okc:#5B8C5A;
+ --cv-bg:#F8DCD6;--cv-fg:#A3271A;--cv-solid:#C53A2A;--cn-bg:#E6DDF2;--cn-fg:#5B3A92;--co-bg:#F3E3D3;--co-fg:#8F4A1F;--newc:#2F6DB5;--eolc:#7A5C3E;--hover:#ECE9E0;
+ --sans:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;--serif:ui-serif,"New York",Georgia,-apple-system,"PingFang TC",serif}
+@media (prefers-color-scheme:dark){:root{--bg:#262624;--surf:#30302E;--ink:#ECEAE3;--sub:#A09C92;--line:#3B3B38;--line2:#33332F;--seg:#33332F;--acc:#D97757;--boxc:#6B6862;--band:#34332F;--okc:#7DB27B;
+ --cv-bg:#5A2620;--cv-fg:#FFB4A8;--cv-solid:#E5533F;--cn-bg:#3E2F57;--cn-fg:#D4C1F5;--co-bg:#4A3424;--co-fg:#F2C29C;--newc:#8DB8F0;--eolc:#C8A57F;--hover:#30302E}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",sans-serif}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--sans);overflow-x:hidden}
+button{font-family:inherit}
 .mk{font-weight:700;text-decoration:underline;text-underline-offset:2px}
 .sub{color:var(--sub)}
-#list{padding-bottom:40px}
-/* pwa: setup / pending / login panes share the old login look */
-.pane{max-width:340px;margin:0 auto;padding:calc(12vh) 20px 20px}
-.pane h2{margin:0 0 4px;font-size:22px}
-.pane h3{margin:18px 0 2px;font-size:15px}
-.pane input{width:100%;padding:12px;margin:6px 0;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font:inherit;font-size:16px}
-.pane button{width:100%;padding:12px;margin-top:8px;border:0;border-radius:10px;background:var(--ink);color:var(--bg);font:inherit;font-size:16px}
-.pane button.ghost{background:var(--card);color:var(--ink);border:1px solid var(--line)}
-.pane button:disabled{opacity:.5}
-.pane form + form{margin-top:10px;padding-top:6px;border-top:1px solid var(--line)}
-.msg{margin-top:10px;min-height:20px;color:var(--acc);font-size:14px;overflow-wrap:anywhere}
-.code{font-size:40px;font-weight:700;letter-spacing:.18em;text-align:center;margin:14px 0 4px;font-variant-numeric:tabular-nums}
-#foot{max-width:340px;margin:0 auto;padding:30px 20px calc(20px + env(safe-area-inset-bottom));text-align:center}
-.lo{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:2px 8px;font:12px inherit;font-family:inherit}
-#foot .lo{padding:6px 12px;color:var(--sub)}
 .hid #list,.hid #detail{visibility:hidden}
-.top{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(8px + env(safe-area-inset-top)) 12px 8px;border-bottom:1px solid var(--line)}
-.top h1{font-size:16px;margin:0 0 6px;display:flex;justify-content:space-between;align-items:baseline}
-.top h1 small{font-weight:400;color:var(--sub);font-size:12px}
-.seg{display:flex;gap:6px;margin-bottom:6px}
-.seg button{flex:1;padding:8px 4px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;font:inherit}
-.seg button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-input[type=search]{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font:inherit;margin-bottom:6px}
-.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
-.chips::-webkit-scrollbar{display:none}
-.chip{flex:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);font:13px inherit;font-family:inherit}
-.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
-.card{display:block;width:calc(100% - 24px);margin:8px 12px 0;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:12px;text-align:left;color:inherit;font:inherit}
-.card .r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.bed{font-weight:700;font-size:17px}
-.id{color:var(--sub);font-size:12px}
-.badge{display:inline-block;padding:1px 7px;border-radius:6px;font-size:12px;font-weight:700;color:#fff;background:var(--tag)}
-.badge.new{background:var(--new);color:var(--newink)}
-.badge.mk2{background:var(--accbg);color:var(--acc);text-decoration:underline}
-.card .r2{margin-top:4px;font-size:13px}
-.empty{padding:40px 12px;text-align:center;color:var(--sub)}
-.sec-h{margin:14px 12px 4px;font-size:12px;color:var(--sub);letter-spacing:.04em}
-#detail{display:none;position:fixed;inset:0;background:var(--bg);overflow-y:auto;z-index:10;-webkit-overflow-scrolling:touch}
-.bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:6px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px;background:var(--bg);border-bottom:1px solid var(--line)}
-.bar button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:8px 14px;font:inherit}
-.bar .t{flex:1;text-align:center;font-weight:700}
-.body{padding:10px 12px 60px;max-width:640px;margin:0 auto}
-.hd .bed{font-size:22px}.hd .nm{font-size:20px;font-weight:700;margin-left:6px}
-.meta{color:var(--sub);font-size:13px;margin:2px 0 8px}
-.tags{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
-.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:10px}
-.box h3{margin:0 0 6px;font-size:13px;color:var(--sub);font-weight:600}
-details.box summary{cursor:pointer;font-size:13px;color:var(--sub);font-weight:600;list-style:none}
-details.box summary::before{content:"▸ "}details[open].box summary::before{content:"▾ "}
-details.box[open] summary{margin-bottom:6px}
-.labs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 8px}
-.labs.c4{grid-template-columns:repeat(4,1fr)}
-.sub2{font-size:12px;font-weight:700;color:var(--sub);margin:10px 0 4px;padding-top:6px;border-top:1px solid var(--line)}
-.sub2:first-of-type{border-top:0;padding-top:0;margin-top:0}
-.lab{font-size:12px;color:var(--sub)}.lab b{display:block;font-size:17px;color:var(--ink);font-weight:600}
-.lab b.mk{font-weight:800}
-svg{width:100%;height:auto;display:block;touch-action:pan-y}
-#read{font-size:12.5px;min-height:18px;color:var(--ink);margin-top:4px}
-.leg{font-size:12px;color:var(--sub);margin-top:4px}.leg i{font-style:normal;font-weight:700}
-.row{margin:2px 0}.row .k{font-weight:700}
-.row.k{font-weight:700;margin-top:6px}
+
+/* ---- boot / setup / pending / login: one centred column ---- */
+.pane,#boot{max-width:340px;margin:0 auto;padding:18vh 20px 20px;text-align:center}
+#boot{padding-top:30vh;color:var(--sub);font-size:13px}
+.logo{display:block;width:64px;height:64px;margin:0 auto 12px}
+.pane h2{margin:0 0 4px;font:500 30px/1.15 var(--serif)}
+.pane .sub{margin:0 0 18px;font-size:13px;min-height:1px}
+.pane form{text-align:left}
+.pane input{width:100%;height:48px;padding:0 14px;margin:6px 0;border:1px solid var(--line);border-radius:12px;background:var(--surf);color:var(--ink);font:16px var(--sans)}
+.pane button{width:100%;height:52px;margin-top:10px;border:0;border-radius:14px;background:var(--ink);color:var(--bg);font:500 16px var(--sans)}
+.pane button.ghost{background:var(--surf);color:var(--ink);border:1px solid var(--line);height:46px}
+.pane button:disabled{opacity:.5}
+.lnk,.pane button.lnk{width:auto;height:44px;padding:0 14px;margin:6px auto 0;border:0;background:none;color:var(--acc);font:500 15px var(--sans)}
+#boot .lnk{display:block}
+.msg{margin-top:10px;min-height:20px;color:var(--cv-fg);font-size:14px;overflow-wrap:anywhere}
+.code{margin:6px 0 4px;font:500 44px var(--serif);letter-spacing:.2em;font-variant-numeric:tabular-nums}
+.wait{display:flex;align-items:center;justify-content:center;gap:8px;margin:10px 0 6px;font-size:13px;color:var(--sub)}
+.spin{flex:none;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#foot{max-width:340px;margin:0 auto;padding:30px 20px calc(20px + env(safe-area-inset-bottom));text-align:center}
+.lo{min-height:44px;border:1px solid var(--line);background:var(--surf);color:var(--sub);border-radius:10px;padding:0 16px;font:12px var(--sans)}
+#lsys{margin-top:14px;font-size:13px;color:var(--sub);display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px}
+#lsys .note{color:var(--cv-fg)}
+
+/* ---- list shell ---- */
+#list{padding-bottom:calc(76px + env(safe-area-inset-bottom));overflow-x:hidden}
+.hd{display:flex;align-items:flex-start;justify-content:space-between;padding:calc(14px + env(safe-area-inset-top)) 20px 0}
+.ttl{margin:0;font:500 30px/1.15 var(--serif);letter-spacing:-.01em}
+.mn{flex:none;width:44px;height:44px;margin:-6px -10px 0 0;border:0;background:none;color:var(--sub);font-size:24px;line-height:1;border-radius:12px}
+.mn:active{background:var(--hover)}
+.meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:4px 20px 0;font-size:13px;color:var(--sub)}
+.meta .stale{color:var(--cv-fg);font-weight:600}
+.pc::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--okc);margin-right:5px;vertical-align:1px}
+.pc.bad::before{background:var(--cv-solid)}.pc.off::before{background:var(--boxc)}
+.rq{display:inline-flex;align-items:center;min-height:44px;margin:0 0 0 auto;border:1px solid var(--line);background:var(--surf);color:var(--ink);border-radius:999px;padding:0 16px;font:13px var(--sans)}
+.rq:disabled{opacity:.5}
+.nline{padding:2px 20px 0;font-size:13px;color:var(--sub);overflow-wrap:anywhere}
+.nline:empty,.bnr:empty{display:none}
+.bnr{display:flex;align-items:center;gap:10px;margin:8px 20px 0;padding:8px 12px;border-radius:10px;background:var(--co-bg);color:var(--co-fg);font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.bnr button{flex:none;min-height:44px;margin:-8px -6px -8px 0;border:1px solid currentColor;background:none;color:inherit;border-radius:999px;padding:0 14px;font:600 13px var(--sans)}
+.tb{position:fixed;left:0;right:0;bottom:0;z-index:6;display:flex;background:var(--bg);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+.tb button{position:relative;flex:1;height:56px;border:0;background:none;color:var(--sub);font:500 14px var(--sans)}
+.tb button.on{color:var(--acc);font-weight:700}
+.tb .ct{display:inline-block;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:9px;background:var(--cv-solid);color:#fff;font:700 11px/18px var(--sans);vertical-align:1px}
+.tb .ct:empty{display:none}
+
+/* ---- priority tab ---- */
+.pg{display:flex;align-items:center;gap:10px;padding:10px 20px 2px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+.pgb{flex:1;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.pgb span{display:block;height:100%;background:var(--acc)}
+.gh{display:flex;align-items:center;gap:8px;padding:16px 20px 4px;font:600 12px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--sub)}
+.gh i{width:10px;height:10px;border-radius:3px;background:var(--co-fg)}
+.gh.g1 i{background:var(--cv-solid)}.gh.g2 i{background:var(--cn-fg)}
+.ck{display:flex;align-items:center;gap:12px;min-height:54px;padding:0 6px 0 20px;border-bottom:1px solid var(--line2);cursor:pointer;user-select:none;-webkit-user-select:none}
+.ck:active,.pr:active{background:var(--hover)}
+.cbx{flex:none;width:22px;height:22px;border:1.6px solid var(--boxc);border-radius:6px;display:flex;align-items:center;justify-content:center}
+.ck.done .cbx{background:var(--acc);border-color:var(--acc)}
+.ck.done .cbx::after{content:"";width:35%;height:60%;border:solid #fff;border-width:0 2.2px 2.2px 0;transform:translateY(-12%) rotate(45deg)}
+.bed{font:600 17px var(--serif);font-variant-numeric:tabular-nums;min-width:30px}
+.nm{font-weight:500;white-space:nowrap}
+.ck .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ck .chip{min-width:0;white-space:normal;overflow-wrap:anywhere}
+.pr .r1{flex-wrap:wrap}
+.sp{flex:1}
+.ck.done .bed,.ck.done .nm{color:var(--sub);text-decoration:line-through;text-decoration-thickness:1px}
+.ck.done .chip{opacity:.45}
+.go{flex:none;width:44px;height:44px;border:0;background:none;color:var(--sub);font-size:22px;border-radius:10px}
+.go:active{background:var(--hover)}
+.donehd{padding:18px 20px 6px;font-size:13px;color:var(--sub)}
+.empty{padding:48px 20px;text-align:center;color:var(--sub)}
+.empty small{display:block;margin-top:6px;font-size:12px}
+.chip{display:inline-block;padding:2px 8px;border-radius:7px;font:600 14px var(--serif);font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip.g1{background:var(--cv-bg);color:var(--cv-fg)}.chip.g2{background:var(--cn-bg);color:var(--cn-fg)}.chip.g3{background:var(--co-bg);color:var(--co-fg)}
+.tag{display:inline-block;padding:0 6px;border-radius:5px;border:1px solid currentColor;font:700 10.5px/17px var(--sans);letter-spacing:.05em}
+.t-CRIT{color:var(--cv-solid)}.t-NEW{color:var(--newc)}.t-DNR{color:var(--sub)}.t-EOL{color:var(--eolc)}
+
+/* ---- all tab ---- */
+.seg{display:flex;margin:10px 20px 6px;padding:3px;border-radius:11px;background:var(--seg)}
+.seg button{flex:1;min-height:44px;border:0;background:none;color:var(--ink);padding:0;border-radius:8px;font:500 14px var(--sans)}
+.seg button.on{background:var(--surf);box-shadow:0 1px 3px #0002}
+#q{display:block;width:calc(100% - 40px);margin:4px 20px 6px;padding:10px 12px;border:0;border-radius:10px;background:var(--seg);color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
+.sec{padding:14px 20px 4px;font:600 12px var(--sans);letter-spacing:.06em;color:var(--sub)}
+.pr{padding:12px 20px;border-bottom:1px solid var(--line2);cursor:pointer}
+.pr .r1{display:flex;align-items:center;gap:8px}
+.pr .r1 .bed{font-size:19px}
+.pr .id{font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
+.pr .r2{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;align-items:center}
+.pr .mild{font-size:12.5px;color:var(--sub)}
+
+/* ---- menu sheet, confirm dialog, toast ---- */
+.ov{position:fixed;inset:0;z-index:20;display:none;background:#0006;align-items:flex-end;justify-content:center}
+.ov.on{display:flex}
+.sheet{width:100%;max-width:480px;background:var(--bg);border-radius:18px 18px 0 0;padding:8px 12px calc(14px + env(safe-area-inset-bottom))}
+.sheet button{display:block;width:100%;min-height:52px;border:0;border-bottom:1px solid var(--line2);background:none;color:var(--ink);font:16px var(--sans);text-align:left;padding:0 8px}
+.sheet button.danger{color:var(--cv-fg)}
+.sheet .ver{padding:14px 8px 4px;font-size:13px;color:var(--sub)}
+#dlg{align-items:center;padding:0 24px}
+.dbox{width:100%;max-width:340px;background:var(--bg);border-radius:16px;padding:20px 20px 12px}
+.dbox p{margin:0 0 16px;font-size:15px;overflow-wrap:anywhere;white-space:pre-wrap;max-height:60vh;overflow-y:auto}
+.dbox .row2{display:flex;gap:10px}
+.dbox button{flex:1;min-height:46px;border:1px solid var(--line);border-radius:12px;background:var(--surf);color:var(--ink);font:16px var(--sans)}
+.dbox button.ok{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#toast{position:fixed;left:50%;bottom:calc(68px + env(safe-area-inset-bottom));z-index:30;transform:translateX(-50%);max-width:86vw;padding:10px 16px;border-radius:12px;background:var(--ink);color:var(--bg);font-size:14px;pointer-events:none;display:none;text-align:center}
+#toast.on{display:block}
+
+/* ---- patient page ---- */
+#detail{display:none;position:fixed;inset:0;background:var(--bg);overflow-y:auto;overflow-x:hidden;z-index:10;-webkit-overflow-scrolling:touch}
+.nav{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;padding:calc(4px + env(safe-area-inset-top)) 8px 6px;background:var(--bg);border-bottom:1px solid var(--line2)}
+.nav button{border:0;background:none;color:var(--acc);font:500 16px var(--sans);padding:8px 10px;min-height:44px}
+.nav .pos{padding-right:12px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+.body{max-width:640px;margin:0 auto;padding-bottom:calc(24px + env(safe-area-inset-bottom));overflow-x:hidden}
+.dh{padding:14px 20px 4px}.dh .ttl .b{margin-right:10px;font-variant-numeric:tabular-nums}
+.props{margin:10px 20px 4px;display:grid;grid-template-columns:76px 1fr;gap:6px 10px;font-size:14px}
+.props dt{color:var(--sub)}.props dd{margin:0;font-variant-numeric:tabular-nums}
+.blk{margin:14px 20px 0;padding-top:12px;border-top:1px solid var(--line)}
+.blk h3{margin:0 0 8px;font:600 13px var(--sans);color:var(--sub);letter-spacing:.03em}
+.pk{padding-left:0;min-height:46px;border-bottom:0}
+.vs{width:100%;height:auto;display:block;cursor:pointer}
+.vs .band{fill:var(--band)}
+.vs .ln{fill:none;stroke:var(--ink);stroke-opacity:.55;stroke-width:1.5;stroke-linejoin:round}
+.vs .bp{stroke:var(--ink);stroke-opacity:.5;stroke-width:3;stroke-linecap:round}
+.vs .dot{fill:var(--ink)}.vs .dot.gv{fill:var(--cv-solid)}
+.vs .sl{fill:var(--sub);font:600 12px var(--sans);letter-spacing:.04em}
+.vs .sv{fill:var(--ink);font:600 21px var(--serif)}.vs .sv.gv{fill:var(--cv-fg)}
+.vs .ax{fill:var(--sub);font:12px var(--sans)}
+.vs .gl{stroke:var(--line);stroke-width:1}
+.vs .cur{stroke:var(--acc);stroke-width:1.2}
+.rd{min-height:20px;margin-top:4px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+.lg{display:grid;gap:6px;margin-bottom:10px}
+.lg.c4{grid-template-columns:repeat(4,1fr)}.lg.c3{grid-template-columns:repeat(3,1fr)}
+.lc{padding:6px 8px;border-radius:8px;background:var(--surf);min-width:0}
+.lc .l{font-size:11.5px;color:var(--sub)}.lc .l small{font-size:11px}
+.lc .v{font:500 19px var(--serif);font-variant-numeric:tabular-nums;color:var(--sub);overflow-wrap:anywhere}
+.lc.mild .v{color:var(--ink);font-weight:700}
+.lc.pv{background:var(--cv-bg)}.lc.pn{background:var(--cn-bg)}.lc.po{background:var(--co-bg)}
+.lc.pv .v,.lc.pv .l{color:var(--cv-fg);font-weight:700}
+.lc.pn .v,.lc.pn .l{color:var(--cn-fg);font-weight:700}
+.lc.po .v,.lc.po .l{color:var(--co-fg);font-weight:700}
+.sub2{margin:4px 0 6px;font-size:12px;color:var(--sub)}
+details.tg{margin:0 20px;border-top:1px solid var(--line)}
+details.tg summary{display:flex;align-items:center;gap:8px;min-height:44px;list-style:none;font:600 14px var(--sans);cursor:pointer}
+details.tg summary::-webkit-details-marker{display:none}
+details.tg summary::before{content:"▸";color:var(--sub);font-size:12px;transition:transform .15s}
+details.tg[open] summary::before{transform:rotate(90deg)}
+details.tg summary small{margin-left:auto;font-weight:400;color:var(--sub)}
+details.tg .in{padding:0 0 12px 20px;font-size:14.5px}
+details.tg ul{margin:0;padding-left:16px}details.tg li{margin:3px 0}
+.row{margin:2px 0}.row.k{margin-top:6px;font-weight:700}
 .mg{display:grid;grid-template-columns:fit-content(46%) 1fr;gap:5px 14px;margin:3px 0 6px}
 .mg .st{font-weight:600;overflow-wrap:anywhere}
-ul.ml{margin:2px 0 4px;padding-left:20px}ul.ml li{margin:3px 0}
-.med{margin:2px 0}.med .c{font-weight:700}
 .memo{white-space:pre-wrap;font-size:14px;overflow-wrap:anywhere}
-/* pwa: data stamp / computer status / refresh / notices */
-.sys{font-size:12px;color:var(--sub);margin:0 0 6px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
-.sys:empty{display:none}
-.sys button{border:1px solid var(--acc);background:var(--card);color:var(--acc);border-radius:8px;padding:2px 10px;font:12px inherit;font-family:inherit}
-.sys button:disabled{opacity:.5}
-.banner{margin:0 0 6px;padding:6px 10px;border-radius:8px;background:var(--accbg);color:var(--acc);font-size:13px;font-weight:600;overflow-wrap:anywhere}
-.note{font-size:12px;color:var(--acc);overflow-wrap:anywhere}
-#lsys{margin-top:14px}
-#boot{padding:30vh 20px 20px;text-align:center;color:var(--sub)}
+.pn2{display:flex;gap:10px;padding:20px 20px 12px}
+.pn2 button{flex:1;height:48px;border:1px solid var(--line);border-radius:12px;background:var(--surf);color:var(--ink);font:500 15px var(--sans)}
+.pn2 button:disabled{opacity:.35}
 </style></head><body>
-<div id="boot">載入中…</div>
+<div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
-<div id="setup" class="pane" style="display:none"><h2>值班手冊</h2><p class="sub">首次使用：請選擇登入方式</p>
-<form id="sf" autocomplete="off"><h3>啟用 Face ID / 指紋</h3>
+<div id="setup" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2>值班</h2><p class="sub">首次使用</p>
+<form id="sf" autocomplete="off">
 <input id="su" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
 <input id="sn" type="text" placeholder="顯示姓名（給管理者核對）" maxlength="20" required>
 <button id="sb" type="submit">啟用 Face ID</button></form>
-<form id="pf" autocomplete="on"><h3>使用備援密碼</h3>
+<button id="swpw" type="button" class="lnk">使用通關句</button>
+<form id="pf" autocomplete="on" style="display:none">
 <input id="pu" name="username" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
 <input id="pp" name="password" type="password" placeholder="通關句（5 個英文字）" autocomplete="current-password" autocapitalize="off" required>
 <input id="pk" type="text" placeholder="存取碼" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-<button id="pb" type="submit">登入</button></form>
+<button id="pb" type="submit">開啟</button></form>
 <div id="sm" class="msg"></div>
 <button id="sx" type="button" style="display:none">再按一次 Face ID 完成登記</button></div>
 
-<div id="pending" class="pane" style="display:none"><h2>等待核可</h2>
-<p class="sub">請管理者在院內電腦核可，並核對這組確認碼：</p>
+<div id="pending" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2>等待核可</h2>
+<p class="sub">請在院內電腦執行 approve，核對此 6 碼</p>
 <div id="pcode" class="code"></div><div id="pacct" class="sub"></div>
+<div class="wait"><i class="spin"></i><span id="pm"></span></div>
 <button id="pfin" type="button" style="display:none">完成啟用（Face ID）</button>
 <button id="pchk" type="button" class="ghost">立即檢查</button>
-<button id="pcan" type="button" class="ghost">取消登記</button>
-<div id="pm" class="msg"></div></div>
+<button id="pcan" type="button" class="ghost">取消登記</button></div>
 
-<div id="login" class="pane" style="display:none"><h2>值班手冊</h2>
-<div id="lx"><p class="sub">以 Face ID / 指紋開啟</p><button id="fx" type="button">Face ID 登入</button></div>
-<form id="lf" autocomplete="on"><p class="sub">請輸入帳號與通關句</p>
+<div id="login" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2>值班</h2><p class="sub" id="lsub"></p>
+<div id="lx"><button id="fx" type="button">以 Face ID 開啟</button></div>
+<form id="lf" autocomplete="on">
 <input id="lu" name="username" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
-<input id="lp" name="password" type="password" placeholder="通關句" autocomplete="current-password" autocapitalize="off" required>
-<button id="lb" type="submit">登入</button></form>
+<input id="lp" name="password" type="password" placeholder="通關句（5 個英文字）" autocomplete="current-password" autocapitalize="off" required>
+<button id="lb" type="submit">開啟</button></form>
 <div id="lm" class="msg"></div>
-<div id="lsys" class="sys"></div></div>
+<div id="lsys"></div></div>
 
 <div id="list" style="display:none">
-  <div class="top">
-    <h1><span>值班手冊</span><span><small id="stamp"></small> <button id="lo" class="lo">登出</button></span></h1>
-    <div id="banner" class="banner" style="display:none"></div>
-    <div id="sys" class="sys"></div>
+  <div class="hd"><h1 class="ttl" id="ttl">優先</h1><button id="mn" class="mn" type="button" aria-label="選單">⋯</button></div>
+  <div id="meta" class="meta"></div>
+  <div id="nline" class="nline"></div>
+  <div id="banner" class="bnr"></div>
+  <div id="pri"></div>
+  <div id="all" style="display:none">
     <div class="seg" id="zone"></div>
     <input type="search" id="q" placeholder="搜尋 床號 / 病歷號 / 姓名" autocomplete="off">
-    <div class="chips" id="chips"></div>
+    <div id="cards"></div>
   </div>
-  <div id="cards"></div>
+  <div class="tb"><button type="button" data-tab="pri">優先</button><button type="button" data-tab="all">全部</button></div>
 </div>
 <div id="detail">
-  <div class="bar"><button id="back">← 清單</button><div class="t" id="dt"></div><button id="prev">▲</button><button id="next">▼</button></div>
+  <div class="nav"><button id="back" type="button">‹ 優先</button><div class="pos" id="dt"></div></div>
   <div class="body" id="db"></div>
 </div>
 <div id="foot" style="display:none"><button id="clr" type="button" class="lo">清除本機資料</button></div>
+<div id="menu" class="ov"><div class="sheet"><button type="button" data-act="help">優先門檻</button><button type="button" data-act="lock">鎖定</button><button type="button" class="danger" data-act="clear">清除本機資料</button><div class="ver" id="ver"></div></div></div>
+<div id="dlg" class="ov"><div class="dbox"><p id="dtx"></p><div class="row2"><button type="button" id="dno">取消</button><button type="button" id="dok" class="ok">確定</button></div></div></div>
+<div id="toast"></div>
 <script src="config.js"></script>
 <script src="crypto.js"></script>
+<script src="logic.js"></script>
 <script src="store.js"></script>
 <script src="app.js"></script>
 </body></html>

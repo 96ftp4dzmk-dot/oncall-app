@@ -42,12 +42,17 @@ let POLL = null;      // interval id of the post-request status poll
 let GPOLL = null;     // interval id of the grant poll
 let NOTE = '';        // small notice (offline / cloud unavailable)
 let REQ_MSG = '';     // result of the last 「請更新」
+let REQ_SENDING = false;   // a 「請更新」 POST is in flight
+let SESSION = 0;      // bumped by lock(): async work that started in an earlier session must not touch the screen or memory
+let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
+let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
+let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
+const APP_V = 'v6';   // keep equal to SHELL_V in sw.js
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[‪-‮⁦-⁩]/g, '')
   .replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const num = v => { const n = Number(v); return v == null || v === '' || !Number.isFinite(n) ? '–' : String(n); };
-const safeCol = c => /^#[0-9a-fA-F]{3,8}$/.test(String(c)) ? c : 'inherit';
 const mk = (t, on) => on ? `<span class="mk">${esc(t)}</span>` : esc(t);
 const pad = n => String(n).padStart(2, '0');
 const fmtT = ms => { const d = new Date(Number(ms)); return `${pad(d.getUTCMonth()+1)}/${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
@@ -55,97 +60,261 @@ const clip = (s, n) => String(s == null ? '' : s).slice(0, n || 20);
 const own = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 function hist(u) { try { history.replaceState(null, '', u || location.pathname + location.search); } catch (e) {} }
 
-/* ================= rendering (from booklet_app.TEMPLATE) ================= */
-let st = {zone: '內圍', chip: '全部', q: '', idx: [], cur: -1};
-const CHIPS=[['全部',p=>true],['有異常',p=>p.vit.length||p.labs.some(l=>l.abn)],['病危',p=>p.crit],['Neutropenic fever',p=>p.nf],['新病人',p=>p.new],['DNR/末期',p=>p.dnr||p.end],['MO',p=>p.dept==='MO'],['HEMA',p=>p.dept==='HEMA']];
-function abn(p){return p.vit.map(v=>v.t).concat(p.labs.filter(l=>l.abn).map(l=>l.l+' '+l.v)).concat(p.notes)}
-function tags(p){let h='';
- if(p.crit)h+='<span class="badge">病危</span>';
- if(p.new)h+='<span class="badge new">新</span>';
- if(p.nf)h+='<span class="badge mk2">Neutropenic fever</span>';
- if(p.dnr)h+='<span class="badge mk2">DNR</span>';
- if(p.end)h+='<span class="badge mk2">末期</span>';
- return h}
-function renderTop(){
- $('#zone').innerHTML=['內圍','外圍'].map(z=>`<button class="${st.zone===z?'on':''}" data-z="${z}">${z} ${P.filter(p=>p.zone===z).length}</button>`).join('');
- $('#chips').innerHTML=CHIPS.map(c=>`<button class="chip ${st.chip===c[0]?'on':''}" data-c="${esc(c[0])}">${esc(c[0])}</button>`).join('')}
-function renderList(){
- const f=CHIPS.find(c=>c[0]===st.chip)[1], q=st.q.trim().toLowerCase();
- st.idx=P.map((p,i)=>i).filter(i=>{const p=P[i];return p.zone===st.zone&&f(p)&&(!q||(p.bed+p.chart+p.name+p.dept).toLowerCase().includes(q))});
- if(!st.idx.length){$('#cards').innerHTML='<div class="empty">沒有符合的病人</div>';return}
- let h='',last='';
- st.idx.forEach(i=>{const p=P[i];
-  if(p.dept!==last){h+=`<div class="sec-h">${p.dept==='MO'?'腫瘤內科 MO':'血液腫瘤 HEMA'}</div>`;last=p.dept}
-  const a=abn(p);
-  h+=`<button class="card" data-i="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="id">${esc(p.chart)}</span><span>${esc(p.name)}</span>${tags(p)}</div>`+
-     (a.length?`<div class="r2">${a.slice(0,4).map(x=>mk(x,true)).join(' · ')}${a.length>4?` <span class="sub">+${a.length-4}</span>`:''}</div>`:'')+`</button>`});
- $('#cards').innerHTML=h}
-function chartSVG(p){
- const W=340,H=176,L=26,R=334,tT=18,tB=60,bT=68,bB=H-16,N=Number(D.now),t0=N-72*3600e3,sp=72*3600e3;
- const X=t=>L+(Number(t)-t0)/sp*(R-L), Yt=v=>tB-(Math.min(Math.max(Number(v),35),41)-35)/6*(tB-tT), Yb=v=>bB-(Math.min(Math.max(Number(v),0),180)-0)/180*(bB-bT);
- let s=`<svg id="ch" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-size="7.5" font-family="inherit">`;
- s+=`<rect x="${L}" y="${Yb(120)}" width="${R-L}" height="${Yb(80)-Yb(120)}" fill="#66bb6a" fill-opacity=".3"/>`;   // normal BP band 80-120 mmHg (light green, 30%)
- s+=`<rect x="${L}" y="${tT}" width="${R-L}" height="${tB-tT}" fill="none" stroke="var(--grid)"/><rect x="${L}" y="${bT}" width="${R-L}" height="${bB-bT}" fill="none" stroke="var(--grid)"/>`;
- const d0=new Date(t0);d0.setUTCHours(0,0,0,0);
- for(let t=d0.getTime();t<=N;t+=43200e3){if(t<t0)continue;const x=X(t),mid=new Date(t).getUTCHours()===0;
-  s+=`<line x1="${x}" x2="${x}" y1="${tT}" y2="${bB}" stroke="var(--grid)" stroke-width="${mid?.7:.3}"/><text x="${x}" y="${H-4}" text-anchor="middle" fill="var(--sub)">${mid?pad(new Date(t).getUTCMonth()+1)+'/'+pad(new Date(t).getUTCDate()):'12h'}</text>`}
- [36,38,40].forEach(v=>s+=`<text x="${L-3}" y="${Yt(v)+2.5}" text-anchor="end" fill="var(--sub)">${v}</text>`);
- [50,100,150].forEach(v=>s+=`<text x="${L-3}" y="${Yb(v)+2.5}" text-anchor="end" fill="var(--sub)">${v}</text>`);
- const dash=(y)=>`<line x1="${L}" x2="${R}" y1="${y}" y2="${y}" stroke="var(--sub)" stroke-width=".5" stroke-dasharray="3 2"/>`;
- s+=dash(Yt(37.7))+dash(Yb(90))+dash(Yb(120));
- const line=(i,Y,col,r)=>{const pts=p.ser.filter(r=>r[i]!=null).map(r=>[X(r[0]),Y(r[i])]);
-  if(pts.length>1)s+=`<polyline points="${pts.map(q=>q.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="1.4"/>`;
-  pts.forEach(q=>s+=`<circle cx="${q[0]}" cy="${q[1]}" r="${r}" fill="${col}"/>`)};
- p.ser.forEach(r=>{if(r[4]!=null&&r[5]!=null)s+=`<line x1="${X(r[0])}" x2="${X(r[0])}" y1="${Yb(r[4])}" y2="${Yb(r[5])}" stroke="var(--ink)" stroke-width="2.2"/>`});
- line(1,Yt,'var(--tp)',2.2);line(2,Yb,'var(--hr)',2);line(3,Yb,'var(--rr)',1.8);
- s+=`<line id="cur" x1="0" x2="0" y1="${tT}" y2="${bB}" stroke="var(--acc)" stroke-width="1" style="display:none"/>`;
- if(!p.ser.length)s+=`<text x="${(L+R)/2}" y="${(bT+bB)/2}" text-anchor="middle" fill="var(--sub)" font-size="10">72h 無生命徵象</text>`;
- s+=`</svg><div id="read" class="sub">點圖表看數值</div><div class="leg"><i style="color:var(--tp)">TP</i> °C(上)　<i style="color:var(--hr)">HR</i>　<i style="color:var(--rr)">RR</i>　<i>BP</i> 直條 = 舒張壓~收縮壓(下)　虛線: 37.7 / 90 / 120　<i style="color:#43a047">綠帶</i> 正常血壓 80~120</div>`;
- return s}
-function bindChart(p){
- const svg=$('#ch');if(!svg||!p.ser.length)return;
- const N=Number(D.now),t0=N-72*3600e3,L=26,R=334;
- const show=ev=>{const r=svg.getBoundingClientRect(),cx=(ev.touches?ev.touches[0].clientX:ev.clientX);
-  const vx=(cx-r.left)/r.width*340,t=t0+(vx-L)/(R-L)*72*3600e3;
-  let best=p.ser[0];p.ser.forEach(q=>{if(Math.abs(q[0]-t)<Math.abs(best[0]-t))best=q});
-  const x=L+(Number(best[0])-t0)/(72*3600e3)*(R-L),c=$('#cur');c.setAttribute('x1',x);c.setAttribute('x2',x);c.style.display='';
-  $('#read').innerHTML=`<b>${esc(fmtT(best[0]))}</b>　TP ${num(best[1])}　HR ${num(best[2])}　RR ${num(best[3])}　BP ${best[4]!=null?num(best[4])+'/'+num(best[5]):'–'}　SpO₂ ${num(best[6])}`};
- svg.addEventListener('click',show);svg.addEventListener('touchmove',show,{passive:true})}
-function box(title,inner,open){return inner?`<details class="box" ${open?'open':''}><summary>${title}</summary>${inner}</details>`:''}
-function renderDetail(i){
- const p=P[i];st.cur=st.idx.indexOf(i);hist('#p'+i);
- $('#dt').textContent=`${st.cur+1} / ${st.idx.length}`;
- let h=`<div class="hd"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span></div>
- <div class="meta">${esc(p.chart)} · ${esc(p.dept)}${p.vs?' · 主治 '+esc(p.vs):''}${p.adm?' · 入院 '+esc(p.adm):''}</div><div class="tags">${tags(p)}</div>`;
- h+=`<div class="box"><h3>生命徵象（3天）</h3>${chartSVG(p)}${p.vit.length?`<div class="row" style="margin-top:6px">${p.vit.map(v=>mk(v.t,true)+` <span class="sub">${esc(v.w)}</span>`).join(' · ')}</div>`:''}</div>`;
- const grid=(names,c4)=>{const L=p.labs.filter(l=>names.includes(l.l));return L.length?`<div class="labs${c4?' c4':''}">${L.map(l=>`<div class="lab">${esc(l.l)}${l.d?' <small>'+esc(l.d)+'</small>':''}<b class="${l.abn?'mk':''}">${esc(l.v)}</b></div>`).join('')}</div>`:''};
- const sec=(t,b)=>b?`<div class="sub2">${t}</div>${b}`:'';
- const mi=Object.entries(p.micro).map(([k,rows])=>`<div class="row k">${esc(k)}</div><div class="mg">${rows.map(r=>`<span class="st">${r.pos?mk(r.t,true):esc(r.t)}</span><span>${esc(r.i)}${Number(r.n)>1?' ×'+Number(r.n):''}</span>`).join('')}</div>`).join('')+(p.fw?`<div class="row">${mk('Fever work-up?',true)}</div>`:'');
- h+=box('檢驗（7天內最新）',sec('Hemogram',grid(['WBC','ANC','Hb','PLT'],true))
-  +sec('Basic chems',grid(['Cre','BUN','ALT','T-bil','INR','Na','K','Ca','LDH'],false)+(p.notes.length?`<div class="row">${p.notes.map(n=>mk(n,true)).join(' · ')}</div>`:''))
-  +sec('Culture report（7天）',mi),true);
- h+=box('今日檢驗 / 影像',p.today.map(t=>`<div class="row">${esc(t)}</div>`).join(''),true);
- h+=box('目前處方（Active）',(p.meds.length||p.others.length)?`<ul class="ml">${p.meds.map(m=>`<li class="med"><span class="c" style="color:${safeCol(m.col)}">[${esc(m.c)}]</span> ${esc(m.n)}${m.d?' D'+esc(m.d):''}</li>`).join('')}${p.others.map(o=>`<li class="sub">${esc(o)}</li>`).join('')}</ul>`:'',false);
- h+=box('交班與交代事項',p.memo?`<div class="memo">${esc(p.memo)}</div>`:'',false);
- h+=box('護理紀錄（最新）'+(p.nurs?' · '+esc(p.nurs.w):''),p.nurs?`<div class="memo">${esc(p.nurs.t)}</div>`:'',false);
- $('#db').innerHTML=h;bindChart(p);
- $('#detail').style.display='block';$('#detail').scrollTop=0;document.body.style.overflow='hidden'}
-function go(d){const n=st.cur+d;if(n<0||n>=st.idx.length)return;renderDetail(st.idx[n])}
+/* ================= rendering ================= */
+const newSt = () => ({tab: 'pri', zone: '內圍', q: '', idx: [], cur: -1, from: 'pri', order: []});
+let st = newSt();
+const DEPT_H = {MO: 'MO 腫瘤內科', HEMA: 'HEMA 血液腫瘤'};
+/* English outlined labels only (no Chinese on a patient): CRIT NEW DNR EOL; NF is expressed by the ANC chip */
+function tags(p) {
+  let h = '';
+  if (p.crit) h += '<span class="tag t-CRIT">CRIT</span>';
+  if (p.new) h += '<span class="tag t-NEW">NEW</span>';
+  if (p.dnr) h += '<span class="tag t-DNR">DNR</span>';
+  if (p.end) h += '<span class="tag t-EOL">EOL</span>';
+  return h;
+}
+const chipHtml = it => `<span class="chip g${Number(it.g)}">${esc(it.txt)}</span>`;
+
+/* recompute the priority items from P and drop ticks whose item is gone or changed -> true when the ticks changed */
+function recalc() {
+  ITEMS = priorityItems(P);
+  const kept = pruneChecks(CHECKS, ITEMS), changed = kept.length !== CHECKS.length;
+  CHECKS = kept;
+  return changed;
+}
+
+function renderTabs() {
+  const open = splitItems(ITEMS, CHECKS).open.length;
+  $('.tb [data-tab=pri]').innerHTML = '優先' + (open ? `<span class="ct">${open}</span>` : '');
+  $('.tb [data-tab=all]').textContent = `全部 ${P.length}`;
+  document.querySelectorAll('.tb button').forEach(b => b.classList.toggle('on', b.dataset.tab === st.tab));
+  $('#ttl').textContent = st.tab === 'pri' ? '優先' : '全部';
+}
+function showTab(t) {
+  st.tab = t;
+  $('#pri').style.display = t === 'pri' ? '' : 'none';
+  $('#all').style.display = t === 'all' ? '' : 'none';
+  renderTabs();
+  if (t === 'pri') renderPri(); else renderAll();
+}
+
+function renderPri() {
+  const el = $('#pri');
+  if (!ITEMS.length) { el.innerHTML = '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
+  const {open, done} = splitItems(ITEMS, CHECKS);
+  const row = (it, d) => { const p = P[it.pi] || {};
+    return `<div class="ck${d ? ' done' : ''}" role="checkbox" aria-checked="${d}" tabindex="0" data-id="${esc(it.id)}"><span class="cbx"></span><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span>${chipHtml(it)}<span class="sp"></span><button class="go" type="button" data-go="${Number(it.pi)}" aria-label="開啟病人頁">›</button></div>`; };
+  let h = `<div class="pg"><span>${done.length} / ${ITEMS.length}</span><div class="pgb"><span style="width:${Math.round(done.length / ITEMS.length * 100)}%"></span></div></div>`;
+  GROUPS.forEach(g => { const rows = open.filter(i => i.g === g.g);
+    if (rows.length) h += `<div class="gh g${g.g}"><i></i>${g.name} · ${rows.length}</div>` + rows.map(i => row(i, false)).join(''); });
+  if (done.length) h += `<div class="donehd">已處理 ${done.length}</div>` + done.map(i => row(i, true)).join('');
+  el.innerHTML = h;
+}
+
+function renderAll() {
+  const q = st.q.trim().toLowerCase();
+  $('#zone').innerHTML = ['內圍', '外圍'].map(z => `<button class="${st.zone === z ? 'on' : ''}" data-z="${z}">${z} ${P.filter(p => p.zone === z).length}</button>`).join('');
+  st.idx = P.map((p, i) => i).filter(i => { const p = P[i]; return p.zone === st.zone && (!q || (p.bed + p.chart + p.name + p.dept).toLowerCase().includes(q)); });
+  if (!st.idx.length) { $('#cards').innerHTML = '<div class="empty">沒有符合的病人</div>'; return; }
+  const by = {};
+  ITEMS.forEach(it => { (by[it.pi] = by[it.pi] || []).push(it); });
+  let h = '', last = '';
+  st.idx.forEach(i => {
+    const p = P[i];
+    if (p.dept !== last) { h += `<div class="sec">${esc(DEPT_H[p.dept] || p.dept)}</div>`; last = p.dept; }
+    const all = by[i] || [], have = new Set(all.map(x => x.key));
+    const chips = all.filter(x => x.key !== 'CRIT' && x.key !== 'NEW').map(chipHtml).join('');
+    const mild = (Array.isArray(p.labs) ? p.labs : []).filter(l => l && l.abn && !have.has(l.l)).map(l => `${esc(l.l)} ${esc(labText(l))}${labArrow(l.l, l.v)}`);
+    const r2 = chips + (mild.length ? `<span class="mild">${mild.slice(0, 3).join(' · ')}${mild.length > 3 ? ' +' + (mild.length - 3) : ''}</span>` : '');
+    h += `<div class="pr" role="button" tabindex="0" data-i="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="id">${esc(p.chart)}</span><span class="sp"></span>${tags(p)}</div>${r2 ? `<div class="r2">${r2}</div>` : ''}</div>`;
+  });
+  $('#cards').innerHTML = h;
+}
+
+/* ---- tick state: memory copy CHECKS, stored encrypted (crypto.js sealChecks) under a subkey of the login key ---- */
+/* key to seal with: Face ID = this month's PRF key if it was derived at login, else the entry period's; password = the kek */
+function checksKey() {
+  if (!REG) return null;
+  if (REG.mode === 'x') {
+    if (!KEYS) return null;
+    const cur = period(new Date()), p = own(KEYS, cur) ? cur : Object.keys(KEYS)[0];
+    return p ? {ikm: KEYS[p], mode: 'x', p: p} : null;
+  }
+  return KEK ? {ikm: KEK, mode: 'pw', p: null} : null;
+}
+/* -> string[] ([] when nothing stored or the key it was sealed with is gone, e.g. after a monthly rotation) */
+async function loadChecks() {
+  let rec = null;
+  try { rec = await loadBlob('checks'); } catch (e) { rec = null; }
+  if (!rec || !REG || rec.mode !== REG.mode) return [];
+  const ikm = REG.mode === 'x' ? (KEYS && own(KEYS, rec.p) ? KEYS[rec.p] : null) : KEK;
+  return (ikm && openChecks(ikm, rec)) || [];
+}
+async function saveChecks() {
+  const k = checksKey();
+  if (!k) return;
+  const box = sealChecks(k.ikm, CHECKS);
+  box.mode = k.mode; box.p = k.p;
+  try { await saveBlob(box, 'checks'); } catch (e) { /* ticks stay in memory only */ }
+}
+function toggleCheck(id) {
+  CHECKS = toggleId(CHECKS, id);
+  renderPri(); renderTabs();
+  if ($('#detail').style.display === 'block' && st.cur >= 0) renderPend(st.order[st.cur]);   // the patient page shows the same ticks
+  return saveChecks();
+}
+
+/* ================= patient page ================= */
+const STRIP_W = 340, STRIP_L = 92, STRIP_R = 334, STRIP_ROW = 46, STRIP_SPAN = 72 * 3600e3;
+const STRIP_TRIG = {T: 'T', HR: 'HR', BP: 'SBP', SpO2: 'SpO2', RR: 'RR'};   // strip -> priority item key
+let stripSel = null;                       // index into p.ser of the tapped time; null = latest values
+const fin = v => v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
+function latestIdx(ser, col) { for (let i = ser.length - 1; i >= 0; i--) if (Array.isArray(ser[i]) && fin(ser[i][col]) != null) return i; return -1; }
+function stripText(spec, row) {
+  if (!row) return '–';
+  const n = fin(row[spec.col]);
+  if (n == null) return '–';
+  if (spec.key === 'BP') { const d = fin(row[spec.col + 1]); return d == null ? String(n) : `${n}/${d}`; }
+  return spec.key === 'T' ? n.toFixed(1) : String(n);
+}
+/* five small multiples on one 72 h time axis; sel = index of the tapped row (values on the left follow it) */
+const stripSer = p => { const N = Number(D.now); return cleanSer(p.ser, N - STRIP_SPAN, N + 3600e3); };   // only rows that can be drawn
+function stripsSVG(p, sel) {
+  const ser = stripSer(p);
+  if (!ser.length) return '<div class="rd">72 小時內無生命徵象</div>';
+  const N = Number(D.now), t0 = N - STRIP_SPAN, X = t => STRIP_L + (Number(t) - t0) / STRIP_SPAN * (STRIP_R - STRIP_L);
+  const total = STRIP_ROW * stripSpec.length + 16, mine = ITEMS.filter(it => it.pi === P.indexOf(p));
+  let s = `<svg class="vs" viewBox="0 0 ${STRIP_W} ${total}" xmlns="http://www.w3.org/2000/svg">`;
+  const d0 = new Date(t0); d0.setUTCHours(0, 0, 0, 0);
+  for (let t = d0.getTime(); t <= N; t += 86400e3) {                       // day lines
+    if (t < t0) continue;
+    const x = X(t), d = new Date(t);
+    s += `<line class="gl" x1="${x}" x2="${x}" y1="2" y2="${total - 14}"/><text class="ax" x="${x + 2}" y="${total - 3}">${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}</text>`;
+  }
+  stripSpec.forEach((spec, k) => {
+    const yo = k * STRIP_ROW + 4, h = STRIP_ROW - 8, Y = v => yo + stripY(spec, v, h);
+    s += `<rect class="band" x="${STRIP_L}" y="${Y(spec.bandHi)}" width="${STRIP_R - STRIP_L}" height="${Math.max(0, Y(spec.bandLo) - Y(spec.bandHi))}"/>`;
+    const pts = ser.filter(r => Array.isArray(r) && fin(r[spec.col]) != null);
+    if (spec.key === 'BP') pts.forEach(r => { const d = fin(r[spec.col + 1]); s += `<line class="bp" x1="${X(r[0])}" x2="${X(r[0])}" y1="${Y(r[spec.col])}" y2="${Y(d == null ? r[spec.col] : d)}"/>`; });
+    else if (pts.length > 1) s += `<polyline class="ln" points="${pts.map(r => `${X(r[0])},${Y(r[spec.col])}`).join(' ')}"/>`;
+    const li = latestIdx(ser, spec.col), trig = mine.find(it => it.key === STRIP_TRIG[spec.key]);
+    if (li >= 0) s += `<circle class="dot${trig ? ' gv' : ''}" cx="${X(ser[li][0])}" cy="${Y(ser[li][spec.col])}" r="3"/>`;
+    const row = sel != null && ser[sel] ? ser[sel] : (li >= 0 ? ser[li] : null);
+    s += `<text class="sl" x="0" y="${yo + 11}">${spec.label}</text><text class="sv${sel == null && trig ? ' gv' : ''}" x="0" y="${yo + 34}">${stripText(spec, row)}</text>`;
+  });
+  if (sel != null && ser[sel]) s += `<line class="cur" x1="${X(ser[sel][0])}" x2="${X(ser[sel][0])}" y1="2" y2="${total - 14}"/>`;
+  return s + '</svg>';
+}
+function renderStrips(p) {
+  const box = $('#vsbox'); if (!box) return;
+  box.innerHTML = stripsSVG(p, stripSel);
+  const ser = stripSer(p);
+  $('#read').textContent = !ser.length ? '' : stripSel != null && ser[stripSel] ? `${fmtT(ser[stripSel][0])} 的數值` : '最新值（點圖表看該時間點）';
+}
+/* tap = show that time's values (no dragging); tapping the label column goes back to the latest values */
+function bindStrips(p) {
+  const box = $('#vsbox'); if (!box) return;
+  box.onclick = e => {
+    const svg = box.querySelector('svg'), ser = stripSer(p);
+    if (!svg || !ser.length) return;
+    const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) / r.width * STRIP_W;
+    if (vx < STRIP_L - 4) stripSel = null;
+    else {
+      const t = Number(D.now) - STRIP_SPAN + (vx - STRIP_L) / (STRIP_R - STRIP_L) * STRIP_SPAN;
+      stripSel = 0; ser.forEach((q, i) => { if (Math.abs(q[0] - t) < Math.abs(ser[stripSel][0] - t)) stripSel = i; });
+    }
+    renderStrips(p);
+  };
+}
+
+/* lab grid cell: normal = grey, mildly abnormal = bold + arrow, a priority item = the group's soft colour */
+function labCell(l, it) {
+  const cls = it ? 'p' + ({1: 'v', 2: 'n', 3: 'o'}[it.g] || 'o') : l.abn ? 'mild' : '';
+  return `<div class="lc ${cls}"><div class="l">${esc(l.l)}${l.d ? ' <small>' + esc(l.d) + '</small>' : ''}</div><div class="v">${esc(labText(l))}${labArrow(l.l, l.v)}</div></div>`;
+}
+/* WBC arrives per uL ("2900"); the screens show it as 2.9k like the priority chip */
+function labText(l) { const n = l.l === 'WBC' ? fin(l.v) : null; return n == null ? String(l.v) : (n / 1000).toFixed(1) + 'k'; }
+function fold(title, small, inner, open) {
+  return inner ? `<details class="tg"${open ? ' open' : ''}><summary>${title}<small>${small == null ? '' : esc(small)}</small></summary><div class="in">${inner}</div></details>` : '';
+}
+/* 「待處理」 block of the patient page: this patient's priority items, ticked in sync with the priority tab */
+function renderPend(i) {
+  const el = $('#pend'); if (!el) return;
+  const its = ITEMS.filter(it => it.pi === i);
+  el.style.display = its.length ? '' : 'none';
+  el.innerHTML = its.length ? '<h3>待處理</h3>' + its.map(it => `<div class="ck pk${CHECKS.includes(it.id) ? ' done' : ''}" role="checkbox" aria-checked="${CHECKS.includes(it.id)}" tabindex="0" data-id="${esc(it.id)}"><span class="cbx"></span>${chipHtml(it)}</div>`).join('') : '';
+}
+
+function renderDetail(i, from) {
+  const p = P[i];
+  if (from) { st.from = from; st.order = from === 'pri' ? patientsInOrder(ITEMS) : st.idx.slice(); }
+  st.cur = st.order.indexOf(i); hist('#p' + i); stripSel = null;
+  $('#back').textContent = st.from === 'pri' ? '‹ 優先' : '‹ 全部';
+  $('#dt').textContent = `${st.cur + 1} / ${st.order.length}`;
+  const labs = Array.isArray(p.labs) ? p.labs : [], its = ITEMS.filter(it => it.pi === i), notes = Array.isArray(p.notes) ? p.notes : [];
+  const props = [['病歷號', esc(p.chart)], ['科別', `${esc(p.dept)} · ${esc(p.zone)}`], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['標記', tags(p)]].filter(r => r[1]);
+  let h = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2></div>
+  <dl class="props">${props.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>
+  <div class="blk" id="pend"></div>
+  <div class="blk"><h3>生命徵象 · 72 小時</h3><div id="vsbox"></div><div class="rd" id="read"></div></div>`;
+  const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };
+  const hemo = grid(['WBC', 'ANC', 'Hb', 'PLT'], 4), chem = grid(['Cre', 'BUN', 'ALT', 'T-bil', 'INR', 'Na', 'K', 'Ca', 'LDH'], 3);
+  if (hemo || chem || notes.length)
+    h += `<div class="blk"><h3>檢驗 · 7 天內最新</h3>${hemo ? '<div class="sub2">Hemogram</div>' + hemo : ''}${chem ? '<div class="sub2">Chemistry</div>' + chem : ''}${notes.length ? `<div class="rd">${notes.map(esc).join(' · ')}</div>` : ''}</div>`;
+  const objs = a => Array.isArray(a) ? a.filter(x => x && typeof x === 'object') : [];     // a null entry must not break the page
+  const micro = p.micro && typeof p.micro === 'object' ? Object.entries(p.micro) : [];
+  const nMicro = micro.reduce((n, e) => n + objs(e[1]).length, 0);
+  const cx = micro.map(([k, rows]) => `<div class="row k">${esc(k)}</div><div class="mg">${objs(rows).map(r => `<span class="st">${r.pos ? `<span class="chip g3">${esc(r.t)}</span>` : esc(r.t)}</span><span>${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`).join('')}</div>`).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
+  const today = Array.isArray(p.today) ? p.today : [], meds = objs(p.meds), others = Array.isArray(p.others) ? p.others : [];
+  h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
+     + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
+     + fold('目前處方', meds.length + others.length, (meds.length || others.length) ? `<ul>${meds.map(m => `<li><span class="sub">[${esc(m.c)}]</span> ${esc(m.n)}${m.d ? ' D' + esc(m.d) : ''}</li>`).join('')}${others.map(o => `<li class="sub">${esc(o)}</li>`).join('')}</ul>` : '', false)
+     + fold('交班與交代事項', '', p.memo ? `<div class="memo">${esc(p.memo)}</div>` : '', true)
+     + fold('護理紀錄', p.nurs ? p.nurs.w : '', p.nurs ? `<div class="memo">${esc(p.nurs.t)}</div>` : '', false);
+  h += '<div class="pn2"><button id="prev" type="button">‹ 上一位</button><button id="next" type="button">下一位 ›</button></div>';
+  $('#db').innerHTML = h;
+  renderPend(i); renderStrips(p); bindStrips(p);
+  $('#prev').disabled = st.cur <= 0; $('#next').disabled = st.cur >= st.order.length - 1;
+  $('#prev').onclick = () => go(-1); $('#next').onclick = () => go(1);
+  $('#detail').style.display = 'block'; $('#detail').scrollTop = 0; document.body.style.overflow = 'hidden';
+}
+function go(d){const n=st.cur+d;if(n<0||n>=st.order.length)return;renderDetail(st.order[n])}
+/* back to the tab the patient was opened from, at the row that was opened; a newer payload that arrived meanwhile is applied now */
 function closeDetail(){$('#detail').style.display='none';document.body.style.overflow='';hist('');
- if(PENDING){const d=PENDING;PENDING=null;applyData(d);return}   // pwa: newer data arrived while reading a patient
- const el=document.querySelector(`.card[data-i="${st.idx[st.cur]}"]`);if(el)el.scrollIntoView({block:'center'})}
+ const from=st.from;let pi=st.order[st.cur];
+ if(PENDING){const chart=(P[pi]||{}).chart,d=PENDING;PENDING=null;applyData(d);pi=P.findIndex(x=>x.chart===chart)}   // new data: find the patient again by chart number
+ showTab(from);
+ const el=from==='pri'?document.querySelector(`.ck .go[data-go="${Number(pi)}"]`):document.querySelector(`.pr[data-i="${Number(pi)}"]`);
+ if(el)el.scrollIntoView({block:'center'})}
+
+/* ---- menu / confirm box / toast ---- */
+function toast(text){const t=$('#toast');t.textContent=text;t.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('on'),3000)}
+/* info = a notice with only an OK button */
+function ask(text,info){return new Promise(res=>{$('#dtx').textContent=text;$('#dno').style.display=info?'none':'';const d=$('#dlg');d.classList.add('on');
+ const fin=v=>{d.classList.remove('on');$('#dok').onclick=null;$('#dno').onclick=null;res(v)};
+ $('#dok').onclick=()=>fin(true);$('#dno').onclick=()=>fin(false)})}
+function helpText(){return priorityHelp().map(g=>g.name+'\n'+g.lines.map(l=>'・'+l).join('\n')).join('\n\n')+'\n\n每個項目各自一行，可打勾。'}
+function openMenu(){$('#ver').textContent='值班 '+APP_V;$('#menu').classList.add('on')}
+function closeMenu(){$('#menu').classList.remove('on')}
+
 document.addEventListener('click',e=>{
  if(!P)return;
- const z=e.target.closest('[data-z]');if(z){st.zone=z.dataset.z;renderTop();renderList();return}
- const c=e.target.closest('[data-c]');if(c){st.chip=c.dataset.c;renderTop();renderList();return}
- const k=e.target.closest('.card');if(k){renderDetail(+k.dataset.i)}});
-$('#q').addEventListener('input',e=>{if(!P)return;st.q=e.target.value;renderList()});
-$('#back').onclick=closeDetail;$('#prev').onclick=()=>go(-1);$('#next').onclick=()=>go(1);
+ const t=e.target;
+ const tb=t.closest('[data-tab]');if(tb){showTab(tb.dataset.tab);window.scrollTo(0,0);return}
+ const z=t.closest('[data-z]');if(z){st.zone=z.dataset.z;renderAll();return}
+ const gb=t.closest('[data-go]');if(gb){renderDetail(+gb.dataset.go,'pri');return}
+ const ck=t.closest('.ck');if(ck){toggleCheck(ck.dataset.id);return}
+ const pr=t.closest('.pr');if(pr){renderDetail(+pr.dataset.i,'all');return}
+ if(t.closest('#mn')){openMenu();return}
+ const ac=t.closest('[data-act]');
+ if(ac){const a=ac.dataset.act;
+  if(a==='lock'){closeMenu();lock()}else if(a==='clear'){closeMenu();clearLocal()}else if(a==='help'){closeMenu();ask(helpText(),true)}else if(a==='reopen')lock();return}
+ if(t.id==='menu')closeMenu()});
+$('#q').addEventListener('input',e=>{if(!P)return;st.q=e.target.value;renderAll()});
+$('#back').onclick=closeDetail;
+/* tick rows and patient rows are plain elements: Enter / Space on a focused one acts like a tap */
+document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.ck,.pr')){e.preventDefault();e.target.click()}});
 window.addEventListener('keydown',e=>{if($('#detail').style.display!=='block')return;if(e.key==='ArrowLeft')go(-1);if(e.key==='ArrowRight')go(1);if(e.key==='Escape')closeDetail()});
-let sx=0,sy=0;
-$('#detail').addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:true});
-$('#detail').addEventListener('touchend',e=>{if(e.target.closest('svg'))return;const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;
- if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy)*2)go(dx<0?1:-1)},{passive:true});
 
 /* ================= screens ================= */
 function show(id) {
@@ -153,20 +322,31 @@ function show(id) {
   $('#foot').style.display = id === '#list' ? 'none' : '';
   if (id !== '#pending') stopGrantPoll();
 }
-function showBoot(text) { $('#boot').textContent = text; show('#boot'); }
+/* retry = show the 「重試」 button (no data yet) */
+function showBoot(text, retry) { $('#bt').textContent = text; $('#bretry').style.display = retry ? '' : 'none'; show('#boot'); }
+async function retryBoot() {
+  showBoot('下載資料中…');
+  await syncData();
+  if (BLOB) showLogin(); else showBoot('尚無資料，請連 4G 開啟以下載' + (NOTE ? '（' + NOTE + '）' : ''), true);
+}
 function showSetup(text) {
   show('#setup');
   $('#sb').disabled = false; $('#pb').disabled = false;
   $('#sx').style.display = 'none'; $('#sx').onclick = null;
   $('#sm').textContent = text || '';
 }
+const DENIED_MSG = '此帳號目前無權限開啟，請聯絡管理者';
+let DENIED_SHOWN = false;
+const FX_LABEL = '以 Face ID 開啟';
+function fxBusy(on) { $('#fx').disabled = on; $('#fx').textContent = on ? '驗證中…' : FX_LABEL; }
 function showLogin(text) {
   show('#login');
   const x = REG && REG.mode === 'x';
   $('#lx').style.display = x ? '' : 'none';
   $('#lf').style.display = x ? 'none' : '';
-  $('#fx').disabled = false; $('#lb').disabled = false;
+  fxBusy(false); $('#lb').disabled = false; DENIED_SHOWN = false;
   $('#lm').textContent = text || '';
+  $('#lsub').textContent = BLOB && BLOB.stamp ? `資料 ${shortStamp(clip(BLOB.stamp))}${BLOB.count != null ? ' · ' + num(BLOB.count) + ' 人' : ''}` : '';
   renderSys();
 }
 
@@ -184,35 +364,53 @@ function isDutyDay() {
 /* status line parts (HTML): computer status, plus "PC silent" / holiday-file warnings */
 function statusParts() {
   if (!STATUS || !STATUS.at) return [];
-  const s = STATUS, out = [`<span>電腦 ${esc(clip(s.at))} ${s.ok ? '正常' : '異常'}${s.msg ? '：' + esc(clip(s.msg, 80)) : ''}</span>`];
   const age = statusAgeH();
+  const s = STATUS, out = [`<span class="pc ${age != null && age >= STALE_H ? 'off' : s.ok ? '' : 'bad'}">電腦 ${esc(shortStamp(clip(s.at)))} ${s.ok ? '正常' : '異常'}${s.msg ? '：' + esc(clip(s.msg, 80)) : ''}</span>`];
   if (age != null && age >= STALE_H) out.push(`<span class="note">電腦已超過 ${Math.floor(age)} 小時未回報，可能未開機或程式已關閉</span>`);
   if (s.hol_warn === true) out.push(`<span class="note">假日檔讀取失敗，只依週六日執行</span>`);
   return out;
 }
 /* err:"auth" = the server read the access list and this key is not on it (definite rejection) */
-const AUTH_MSG = '存取碼已被拒（可能已被停用）。本機資料仍可登入；請先聯絡管理者確認，確定需重新登記時再按「清除本機資料」';
+const AUTH_MSG = '存取碼已被伺服器拒絕（可能已被停用），請先聯絡管理者確認；確定需重新登記時再按「清除本機資料」';
 /* err:"unavailable" = the server could not read its access list (transient): never suggest clearing local data */
 const UNAVAIL_MSG = '伺服器暫時無法使用，請稍後再試（本機資料仍可登入）';
-function renderSys() {
-  const parts = [];
-  if (BLOB && BLOB.stamp) parts.push(`<span>資料 ${esc(clip(BLOB.stamp))}${BLOB.count != null ? '（' + num(BLOB.count) + '人）' : ''}</span>`);
-  const stp = statusParts();
-  parts.push(...stp);
-  if (AUTH_BAD) parts.push(`<span class="note">${esc(AUTH_MSG)}</span>`);
+/* login screen: data stamp + computer status + notices */
+function loginSys() {
+  const parts = [...statusParts()];
   if (NOTE) parts.push(`<span class="note">${esc(NOTE)}</span>`);
   $('#lsys').innerHTML = parts.join('');
+  if ($('#login').style.display === 'none') return;
+  if (AUTH_BAD) {                                             // the server rejected this access key: no way in from this screen
+    fxBusy(false); $('#fx').disabled = true; $('#lb').disabled = true; $('#lm').textContent = DENIED_MSG; DENIED_SHOWN = true;
+  } else if (DENIED_SHOWN) {                                  // approved again: open the screen up without waiting for new data
+    fxBusy(false); $('#lb').disabled = false; if ($('#lm').textContent === DENIED_MSG) $('#lm').textContent = ''; DENIED_SHOWN = false;
+  }
+}
+/* list header: data stamp, computer dot, 「請更新」, then one grey line per notice */
+function renderMeta() {
   if (!D) return;
-  const lp = [...stp];
-  if (isDutyDay()) lp.push(`<button id="rq">請更新</button>`);
-  else if (STATUS) lp.push(`<span>非值班日（平日不自動更新）</span>`);
-  if (REQ_MSG) lp.push(`<span class="note">${esc(REQ_MSG)}</span>`);
-  if (AUTH_BAD) lp.push(`<span class="note">${esc(AUTH_MSG)}</span>`);
-  if (NOTE) lp.push(`<span class="note">${esc(NOTE)}</span>`);
-  $('#sys').innerHTML = lp.join('');
+  const age = statusAgeH(), sAge = stampAgeH(D.stamp, Date.now()), busy = REQ_SENDING || !!POLL, parts = [];
+  parts.push(`<span${sAge != null && sAge > 12 ? ' class="stale"' : ''}>資料 ${esc(shortStamp(clip(D.stamp)))}（${P.length}人）</span>`);
+  if (STATUS && STATUS.at) parts.push(`<span class="pc ${age != null && age >= STALE_H ? 'off' : STATUS.ok ? '' : 'bad'}">電腦 ${esc(shortStamp(clip(STATUS.at)))}</span>`);
+  if (isDutyDay()) parts.push(`<button id="rq" class="rq" type="button"${busy ? ' disabled' : ''}>${busy ? '等待更新…' : '請更新'}</button>`);
+  $('#meta').innerHTML = parts.join('');
+  const lines = [];
+  if (STATUS && STATUS.ok === false && STATUS.msg) lines.push('電腦回報：' + clip(STATUS.msg, 80));
+  if (STATUS && STATUS.hol_warn === true) lines.push('假日檔讀取失敗，只依週六日執行');
+  if (!isDutyDay() && STATUS) lines.push('非值班日');
+  if (REQ_MSG) lines.push(REQ_MSG);
+  if (AUTH_BAD) lines.push(AUTH_MSG);
+  if (NOTE) lines.push(NOTE);
+  $('#nline').innerHTML = lines.map(l => `<div>${esc(l)}</div>`).join('');
   const b = $('#rq'); if (b) b.onclick = requestRefresh;
 }
-function showBanner(text) { const b = $('#banner'); b.textContent = text; b.style.display = text ? '' : 'none'; }
+/* at most one banner (logic.js pickBanner decides which) */
+function renderBanner() {
+  const r = D ? pickBanner({statusAgeH: statusAgeH(), stampAgeH: stampAgeH(D.stamp, Date.now()), badStampIgnored: BANNER_CTX.badStampIgnored,
+                            newKeyUnopenable: BANNER_CTX.newKeyUnopenable, pending: BANNER_CTX.pending}) : null;
+  $('#banner').innerHTML = r ? `<span>${esc(r.text)}</span>${r.action === 'reopen' ? '<button type="button" data-act="reopen">重新開啟</button>' : ''}` : '';
+}
+function renderSys() { loginSys(); renderMeta(); renderBanner(); }
 function authFailed() { AUTH_BAD = true; renderSys(); }
 
 /* ================= network ================= */
@@ -238,6 +436,7 @@ const dataOk = (d, blob) => !!d && Array.isArray(d.p) && typeof d.stamp === 'str
  * stamp matched. -> true when the stored blob was replaced. */
 async function refreshData() {
   if (!REG || REG.state !== 'ok') return false;
+  const session = SESSION;
   let j;
   try { j = await getJSON(dataUrl()); }
   catch (e) { NOTE = BLOB ? '離線：使用本機資料' : ''; renderSys(); return false; }
@@ -252,21 +451,22 @@ async function refreshData() {
   }
   AUTH_BAD = false;
   const why = blobReplace(j.stamp, BLOB && BLOB.stamp, REG.badStamp, Date.now());
-  if (why === 'stamp') {
-    NOTE = `收到的資料時間異常（${clip(j.stamp)}），未取代本機資料`;
-    renderSys(); return false;
-  }
-  if (why === 'bad') {
-    NOTE = `雲端資料（${clip(j.stamp)}）內外時間不一致，已拒收，等待電腦下一次更新`;
+  if (why === 'stamp' || why === 'bad') {              // logged in: banner; logged out: the login screen has no banner, so a note
+    BANNER_CTX.badStampIgnored = true;
+    NOTE = D ? '' : why === 'stamp' ? `收到的資料時間異常（${clip(j.stamp)}），未取代本機資料`
+                                    : `雲端資料（${clip(j.stamp)}）內外時間不一致，已拒收，等待電腦下一次更新`;
     renderSys(); return false;
   }
   NOTE = '';
+  if (why === '') BANNER_CTX.badStampIgnored = false;
   if (why === 'old') { renderSys(); return false; }
   if (D) {
     const d = await openNewer(j);
-    if (!d) { showBanner(`有新版資料（${clip(j.stamp)}），登出後重新登入以查看`); renderSys(); return false; }
+    if (session !== SESSION) return false;                 // locked meanwhile: drop the plaintext, the next login downloads again
+    if (!d) { BANNER_CTX.newKeyUnopenable = true; renderSys(); return false; }
     await keepBlob(j, true);
-    if ($('#detail').style.display === 'block') { PENDING = d; showBanner(`已下載新資料（${clip(d.stamp)}），返回清單即更新`); }
+    if (session !== SESSION) return true;                  // locked while saving: the blob is stored, but nothing is shown
+    if ($('#detail').style.display === 'block') { PENDING = d; BANNER_CTX.pending = true; }
     else applyData(d);
     renderSys();
     return true;
@@ -304,15 +504,15 @@ async function openNewer(j) {
   return dataOk(d, j) ? d : null;
 }
 
-/* swap in newer decrypted data, keeping zone / chip / search */
+/* swap in newer decrypted data, keeping tab / zone / search; priority items are recomputed and stale ticks dropped */
 function applyData(d) {
-  D = d; P = D.p; PENDING = null;
+  D = d; D.p = D.p.filter(x => x && typeof x === 'object'); P = D.p; PENDING = null;
   st.idx = []; st.cur = -1;
-  $('#stamp').textContent = D.stamp;
-  showBanner('');
+  BANNER_CTX.pending = false; BANNER_CTX.newKeyUnopenable = false;
   REQ_MSG = `已載入新資料（${clip(D.stamp)}）`;
   stopPoll();
-  renderTop(); renderList(); renderSys();
+  if (recalc()) saveChecks();
+  renderTabs(); renderPri(); renderAll(); renderSys();
 }
 
 async function refreshStatus() {
@@ -320,6 +520,7 @@ async function refreshStatus() {
   try {
     const s = await getJSON(statusUrl());
     if (s && s.ok === false && s.err === 'auth') authFailed();
+    else if (!(s && s.err)) AUTH_BAD = false;                 // a normal reply: the server accepts the key again
     if (s && s.ok === false && s.err === 'unavailable') NOTE = UNAVAIL_MSG;    // keep the last status
     else {
       STATUS = (s && s.ok === false && !s.at) ? null : s;
@@ -344,7 +545,7 @@ function startPoll() {
   const until = Date.now() + POLL_MAX_MS;
   let busy = false;
   POLL = setInterval(async () => {
-    if (!D || Date.now() > until) { stopPoll(); return; }
+    if (!D || Date.now() > until) { stopPoll(); renderSys(); return; }
     if (busy) return;
     busy = true;
     try { if (await syncData()) stopPoll(); } finally { busy = false; }
@@ -355,7 +556,7 @@ function reqAcct() { return REG.mode === 'pw' ? accountId(USER) : REG.acct; }
 
 async function requestRefresh() {
   if (!AUTH || !REG) { REQ_MSG = '無法送出（缺少簽章金鑰，請重新登記）'; renderSys(); return; }
-  const b = $('#rq'); if (b) b.disabled = true;
+  REQ_SENDING = true; renderSys();
   try {
     const ts = Math.floor(Date.now() / 1000), acct = reqAcct();
     const j = await postJSON({a: 'refresh', k: REG.access, acct: acct, ts: ts, proof: await proofV3(AUTH, `${acct}|${ts}`)});
@@ -368,6 +569,7 @@ async function requestRefresh() {
   } catch (e) {
     REQ_MSG = '無網路，無法送出';
   }
+  REQ_SENDING = false;
   renderSys();
 }
 
@@ -470,11 +672,11 @@ async function submitEnrollX(user, name, per, priv, credId) {
 function stopGrantPoll() { if (GPOLL) clearInterval(GPOLL); GPOLL = null; }
 function showPending(text) {
   show('#pending');
-  $('#pcode').textContent = REG.code;
+  $('#pcode').textContent = REG.code.slice(0, 3) + ' ' + REG.code.slice(3);     // 6 digits shown as 3 + 3
   $('#pacct').textContent = `帳號雜湊前 6 碼 ${REG.acct.slice(0, 6)}，期別 ${REG.enrollP}`;
   $('#pfin').style.display = REG.grant ? '' : 'none';
   $('#pfin').disabled = false; $('#pchk').disabled = false;
-  $('#pm').textContent = text || (REG.grant ? '已核可，請按「完成啟用」以 Face ID 確認' : '尚未核可（每 60 秒自動檢查）');
+  $('#pm').textContent = text || (REG.grant ? '已核可，請按「完成啟用」以 Face ID 確認' : '等待核可中…（每 60 秒自動檢查）');
   stopGrantPoll();
   if (!REG.grant) { GPOLL = setInterval(() => { if (document.visibilityState === 'visible') checkGrant(); }, GRANT_POLL_MS); checkGrant(); }
 }
@@ -486,7 +688,7 @@ async function checkGrant() {
   const g = j && j.ok === true && j.g && typeof j.g === 'object' ? j.g : null;
   if (!g || JSON.stringify(g) === REG.badGrant) {
     const t = new Date();
-    $('#pm').textContent = `尚未核可（${pad(t.getHours())}:${pad(t.getMinutes())} 已檢查，每 60 秒自動檢查）`;
+    $('#pm').textContent = `等待核可中…（${pad(t.getHours())}:${pad(t.getMinutes())} 已檢查）`;
     return;
   }
   REG.grant = g; REG.grantP = REG.enrollP;
@@ -515,7 +717,8 @@ async function finishEnroll() {
     await saveReg(REG);
     showBoot('啟用完成，下載資料中…');
     await syncData();
-    if (BLOB) showLogin('啟用完成'); else showBoot('啟用完成。電腦下次更新資料後即可登入' + (NOTE ? '（' + NOTE + '）' : ''));
+    if (BLOB) { showLogin(); toast('已核可'); }
+    else { showBoot('啟用完成。電腦下次更新資料後即可登入' + (NOTE ? '（' + NOTE + '）' : ''), true); toast('已核可，下次更新後即可開啟'); }
   } catch (e) {
     showPending('無法完成：' + prfErr(e));
   } finally {
@@ -523,7 +726,7 @@ async function finishEnroll() {
   }
 }
 async function cancelEnroll() {
-  if (!confirm('取消這次登記？')) return;
+  if (!await ask('取消這次登記？')) return;
   stopGrantPoll();
   REG = null;
   try { await removeBlob('reg'); } catch (e) { /* ignore */ }
@@ -554,14 +757,14 @@ async function setupPw(ev) {
   await saveReg(REG);
   await keepBlob(j, true);
   $('#pu').value = ''; $('#pp').value = ''; $('#pk').value = '';
-  startPw(d, user, r.kek, j);
+  await startPw(d, user, r.kek, j);
 }
 
 /* ================= login / lock ================= */
 function startPw(d, user, kek, blob) {
   const e = blob.k[accountId(user)];
   KEK = kek; USER = user; LOGIN_KEY = e.s + '|' + e.it; AUTH = authFromKek(kek);
-  start(d);
+  return start(d);
 }
 
 async function loginPw(ev) {
@@ -577,7 +780,7 @@ async function loginPw(ev) {
   if (!dataOk(d, BLOB)) { r.kek.fill(0); await rejectBlob(); return; }
   msg.textContent = '';
   await markVerified(BLOB.stamp);
-  startPw(d, user, r.kek, BLOB);
+  await startPw(d, user, r.kek, BLOB);
 }
 
 /* The stored blob's inner stamp differs from its plaintext stamp: do not use it. Remember its stamp (refreshData
@@ -596,7 +799,7 @@ async function rejectBlob() {
   }
   BLOB = null;
   try { await removeBlob(); } catch (e) { /* ignore */ }
-  showBoot(`資料（${clip(bad)}）內外時間不一致，已拒收；等待電腦下一次更新`);
+  showBoot(`資料（${clip(bad)}）內外時間不一致，已拒收；等待電腦下一次更新`, true);
 }
 
 /* Face ID: PRF(first = salt of the period this blob was wrapped for, second = salt of this month). The first key
@@ -608,13 +811,13 @@ async function loginX() {
   const e = own(BLOB.k, REG.acct) ? BLOB.k[REG.acct] : null;
   if (!e || e.t !== 'x' || !PERIOD_RE.test(String(e.p))) { msg.textContent = '資料中尚無您的 Face ID 登記（電腦下次更新資料後即可登入）'; return; }
   const cur = period(new Date());
-  $('#fx').disabled = true; msg.textContent = 'Face ID…';
+  fxBusy(true); msg.textContent = '';
   let r;
   try { r = await passkeyGet(REG.credId, prfSalt(e.p), cur !== e.p ? prfSalt(cur) : null); }
-  catch (err) { msg.textContent = '無法使用 Face ID：' + prfErr(err); $('#fx').disabled = false; return; }
+  catch (err) { msg.textContent = '無法使用 Face ID：' + prfErr(err); fxBusy(false); return; }
   const wipe = () => { r.first.fill(0); if (r.second) r.second.fill(0); };
   const pt = await decryptV3X(BLOB, REG.acct, r.first);
-  if (!pt) { wipe(); msg.textContent = 'Face ID 金鑰無法開啟資料（請確認使用登記時的 passkey）'; $('#fx').disabled = false; return; }
+  if (!pt) { wipe(); msg.textContent = 'Face ID 金鑰無法開啟資料（請確認使用登記時的 passkey）'; fxBusy(false); return; }
   const d = decodeData(pt);
   if (!dataOk(d, BLOB)) { wipe(); await rejectBlob(); return; }
   KEYS = {}; KEYS[e.p] = r.first;
@@ -630,8 +833,9 @@ async function loginX() {
   REG.verified = BLOB.stamp; delete REG.badStamp;
   try { await saveReg(REG); await removeBlob('prev'); } catch (err) { /* ignore */ }
   msg.textContent = '';
-  start(d);
-  if (rotate) sendRotate(cur, KEYS[cur].slice(), AUTH ? AUTH.slice() : null);
+  const rotPriv = rotate ? KEYS[cur].slice() : null, rotAuth = AUTH ? AUTH.slice() : null;   // copies: lock() may wipe the globals
+  await start(d);
+  if (rotate) sendRotate(cur, rotPriv, rotAuth);
 }
 
 /* rotation request: newpub = X25519 public key of this month's PRF key, proof = HMAC(auth, acct|newpub|period|ts).
@@ -664,41 +868,53 @@ async function sendRotate(cur, priv, auth) {
     reg.rotP = cur; reg.rotAt = Date.now();
     await saveReg(reg);
     if (j.local) { REQ_MSG = `本機測試模式：輪替（${cur}）未送出`; renderSys(); }
+    else if (D) toast('已更新個人金鑰');
   } catch (e) { /* retried at the next login */ }
   finally { priv.fill(0); if (auth) auth.fill(0); }
 }
 
-function start(d) {
+/* show the list for freshly decrypted data d; the keys (KEYS / KEK) must be set already: they unlock the stored ticks */
+async function start(d) {
   D = d; P = D.p;
-  st = {zone: '內圍', chip: '全部', q: '', idx: [], cur: -1};
+  D.p = D.p.filter(x => x && typeof x === 'object'); P = D.p;
+  lastAct = Date.now();                                   // the login tap counts as activity (the listener only runs once D is set)
+  st = newSt(); BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};
   $('#q').value = '';
-  $('#stamp').textContent = D.stamp;
-  showBanner('');
   REQ_MSG = '';
+  ITEMS = priorityItems(P);
+  const ticks = await loadChecks();
+  if (!D) return;                                         // locked while the ticks were loading
+  CHECKS = pruneChecks(ticks, ITEMS);                     // against the items as they are now (a sync may have replaced the data meanwhile)
   show('#list');
-  renderTop(); renderList(); renderSys();
+  showTab('pri');
+  renderSys();
+  window.scrollTo(0, 0);
   bump();
 }
 
 /* Wipe plaintext and keys from memory and the DOM, back to the login screen (no reload: the blob stays). */
 function lock() {
+  SESSION++;
   clearTimeout(idleT);
   stopPoll();
   if (KEYS) Object.keys(KEYS).forEach(k => KEYS[k].fill(0));
   if (KEK) KEK.fill(0);
   if (AUTH) AUTH.fill(0);
   KEYS = null; KEK = null; AUTH = null; USER = null; LOGIN_KEY = null; D = null; P = null; PENDING = null;
-  st = {zone: '內圍', chip: '全部', q: '', idx: [], cur: -1};
-  $('#cards').innerHTML = ''; $('#db').innerHTML = ''; $('#zone').innerHTML = ''; $('#chips').innerHTML = '';
-  $('#sys').innerHTML = ''; $('#stamp').textContent = ''; $('#q').value = ''; $('#lp').value = ''; $('#lu').value = '';
-  showBanner(''); REQ_MSG = '';
+  ITEMS = []; CHECKS = []; REQ_SENDING = false;
+  BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};
+  st = newSt();
+  ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
+  $('#q').value = ''; $('#lp').value = ''; $('#lu').value = ''; REQ_MSG = '';
+  $('.tb [data-tab=pri]').textContent = '優先'; $('.tb [data-tab=all]').textContent = '全部';
+  ['#menu', '#dlg', '#toast'].forEach(s => $(s).classList.remove('on'));
   $('#detail').style.display = 'none'; document.body.style.overflow = ''; hist('');
   if (!REG || REG.state !== 'ok') return;
-  if (BLOB) showLogin(); else showBoot('尚無資料，請連 4G 開啟以下載');
+  if (BLOB) showLogin(); else showBoot('尚無資料，請連 4G 開啟以下載', true);
 }
 
 async function clearLocal() {
-  if (!confirm('清除這支手機上的所有值班資料（登記、存取碼、已下載資料）？之後需要重新登記。')) return;
+  if (!await ask('清除這支手機上的所有值班資料（登記、存取碼、已下載資料）？之後需要重新登記。')) return;
   lock();
   stopGrantPoll();
   REG = null; BLOB = null; STATUS = null;
@@ -734,7 +950,8 @@ $('#pfin').onclick = finishEnroll;
 $('#pchk').onclick = () => { $('#pm').textContent = '檢查中…'; checkGrant(); };
 $('#pcan').onclick = cancelEnroll;
 $('#clr').onclick = clearLocal;
-$('#lo').onclick = lock;
+$('#bretry').onclick = retryBoot;
+$('#swpw').onclick = () => { const f = $('#pf'); f.style.display = f.style.display === 'none' ? '' : 'none'; };
 
 /* ================= boot ================= */
 async function boot() {
@@ -746,9 +963,9 @@ async function boot() {
   if (!REG || (REG.state !== 'pending' && REG.state !== 'ok')) { showSetup(); return; }
   if (REG.state === 'pending') { showPending(); return; }
   if (BLOB) { showLogin(); syncData(); return; }
-  if (navigator.onLine === false) { showBoot('尚無資料，請連 4G 開啟以下載'); return; }
+  if (navigator.onLine === false) { showBoot('尚無資料，請連 4G 開啟以下載', true); return; }
   showBoot('下載資料中…');
   await syncData();
-  if (BLOB) showLogin(); else showBoot('尚無資料，請連 4G 開啟以下載' + (NOTE ? '（' + NOTE + '）' : '') + (AUTH_BAD ? '。' + AUTH_MSG : ''));
+  if (BLOB) showLogin(); else showBoot('尚無資料，請連 4G 開啟以下載' + (NOTE ? '（' + NOTE + '）' : '') + (AUTH_BAD ? '。' + AUTH_MSG : ''), true);
 }
 boot();

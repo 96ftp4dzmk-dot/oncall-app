@@ -272,7 +272,35 @@
   const prfSalt = p => utf8('oncall-prf-v1|' + p);
   const period = d => { const x = d || new Date(); return x.getFullYear() + '-' + pad2(x.getMonth() + 1); };
 
-  const api = {b64d, b64e, b64ud, b64ue, sha256, hmac, pbkdf2, chacha, hkdf, deriveKek, accountId,
+  /* ================= check state: the ticked 「優先」 ids, sealed under a subkey of the login key =================
+   * dk = HKDF(ikm, empty salt, "oncall-checks-v1", 64); body = ChaCha20(dk[:32]) + HMAC(dk[32:], nonce || ct), the same
+   * recipe as the payload body. The JSON id array is space-padded to a multiple of 256 bytes so the length hides the count. */
+  const CHECKS_INFO = utf8('oncall-checks-v1');
+  function sealChecks(ikm, ids) {
+    const raw = utf8(JSON.stringify(ids)), pt = new Uint8Array(Math.max(1, Math.ceil(raw.length / 256)) * 256).fill(32);
+    pt.set(raw);
+    const dk = hkdf(ikm, new Uint8Array(0), CHECKS_INFO, 64), nonce = G.crypto.getRandomValues(new Uint8Array(12));
+    const ct = chacha(dk.subarray(0, 32), nonce, pt), mac = hmac(dk.subarray(32), cat(nonce, ct));
+    dk.fill(0); pt.fill(0);
+    return {v: 1, n: b64e(nonce), c: b64e(ct), m: b64e(mac)};
+  }
+  /* -> string[] or null (wrong key, tampered, malformed, or not an array of strings); never throws */
+  function openChecks(ikm, box) {
+    try {
+      if (!ikm || !box || box.v !== 1 || typeof box.n !== 'string' || typeof box.c !== 'string' || typeof box.m !== 'string') return null;
+      const nonce = b64d(box.n), ct = b64d(box.c), mac = b64d(box.m);
+      if (nonce.length !== 12) return null;
+      const dk = hkdf(ikm, new Uint8Array(0), CHECKS_INFO, 64);
+      const pt = eq(hmac(dk.subarray(32), cat(nonce, ct)), mac) ? chacha(dk.subarray(0, 32), nonce, ct) : null;
+      dk.fill(0);
+      if (!pt) return null;
+      const ids = JSON.parse(new TextDecoder().decode(pt));
+      pt.fill(0);
+      return Array.isArray(ids) && ids.every(x => typeof x === 'string') ? ids : null;
+    } catch (e) { return null; }
+  }
+
+  const api = {b64d, b64e, b64ud, b64ue, sha256, hmac, pbkdf2, chacha, hkdf, deriveKek, accountId, sealChecks, openChecks,
                x25519Pub, openSealed, sealBox, decryptV3X, decryptV3Pw, decryptV3PwKek, decryptV3Kek, normPass, authFromKek,
                openGrant, sealGrant, proofV3, confirmCode, prfSalt, period, ITERATIONS_PW, MAX_IT};
   Object.assign(G, api);
