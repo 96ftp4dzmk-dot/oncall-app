@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v38';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v39';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -1219,6 +1219,11 @@ function closeNote() {
   NOTE_I = -1;
   saveNotes(); renderTabs();
 }
+function noteRow(x) {
+  const t = esc(x.t);
+  return `<li class="${x.done ? 'done' : ''}"><span class="cbx" data-ntoggle="${esc(x.id)}" role="checkbox" aria-checked="${!!x.done}"></span><input class="ni" data-id="${esc(x.id)}" type="text" enterkeyhint="next" maxlength="200" autocomplete="off" value="${t}"${x.done ? ' readonly' : ''}>${x.done ? `<button type="button" class="nd" data-ndel="${esc(x.id)}" aria-label="刪除">×</button>` : ''}</li>`;
+}
+/* focusId: an item id, '' = the empty line at the end, undefined = leave the focus alone */
 function drawNote(focusId) {
   const p = P && P[NOTE_I];
   if (!p) return;
