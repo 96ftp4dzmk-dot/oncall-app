@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v36';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v38';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -308,7 +308,7 @@ function bindStrips(p) {
 
 /* lab grid cell: normal = grey, mildly abnormal = bold + arrow, a priority item = the group's soft colour */
 function labCell(l, it) {
-  const cls = it ? 'p' + ({1: 'v', 2: 'n', 3: 'o'}[it.g] || 'o') : l.abn ? 'mild' : '';
+  const cls = it ? 'p' + ({1: 'v', 2: 'n', 3: 'b', 4: 'a', 5: 'e', 6: 'o'}[it.g] || 'o') : l.abn ? 'mild' : '';
   return `<div class="lc ${cls}"><div class="l">${esc(l.l)}${l.d ? ' <small>' + esc(l.d) + '</small>' : ''}</div><div class="v">${esc(labText(l))}${labArrow(l.l, l.v)}</div></div>`;
 }
 /* WBC arrives per uL ("2900"); the screens show it as 2.9k like the priority chip */
@@ -368,7 +368,8 @@ function renderDetail(i, from) {
     return toks.join(' ').trim() || String(m.n || ''); };
   const drugLi = m => `<div class="dr"><span class="dn">${esc(drugName(m))}</span><span class="dq">${esc(m.dose || '')}</span><span class="dt">${esc(m.route || '')}</span><span class="dfq">${m.freq ? esc(m.freq) : ''}</span><span class="dd">${m.d ? 'D' + esc(m.d) : ''}</span></div>`;
   const drugHd = '<div class="dr dh2"><span class="dn">藥名</span><span class="dq">劑量</span><span class="dt">途徑</span><span class="dfq">頻次</span><span class="dd">天數</span></div>';
-  const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (PHARM.includes(m.cat) ? m.cat : '其他') === c);   // unknown category -> 其他, never dropped return L.length ? cbox(c, L.length, `<div class="dgrid">${drugHd}${L.map(drugLi).join('')}</div>`) : ''; }).join('');
+  const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (PHARM.includes(m.cat) ? m.cat : '其他') === c);   // unknown category -> 其他, never dropped
+    return L.length ? cbox(c, L.length, `<div class="dgrid">${drugHd}${L.map(drugLi).join('')}</div>`) : ''; }).join('');
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
      + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
      + fold('目前處方', drugs.length, drugBoxes, true)

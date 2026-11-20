@@ -5,7 +5,8 @@
 (function (G) {
   'use strict';
 
-  const GROUPS = [{g: 1, name: 'VITAL SIGNS'}, {g: 2, name: 'NEUTROPENIA'}, {g: 3, name: 'OTHERS'}];
+  const GROUPS = [{g: 1, name: 'VITAL SIGNS'}, {g: 2, name: 'NEUTROPENIA'}, {g: 3, name: 'BACTEREMIA'},
+                  {g: 4, name: 'AKI'}, {g: 5, name: 'ELECTROLYTES'}, {g: 6, name: 'OTHERS'}];
 
   /* number from a lab string: drop a leading "<" / ">" and a trailing "k"; null when it is not a finite number */
   function parseNum(s) {
@@ -50,17 +51,17 @@
     {key: 'RR', g: 1, help: 'RR > 30', f: p => { const n = lastOf(p.ser, 3); return n != null && n > 30 ? `RR ${n}` : null; }},
     {key: 'SpO2', g: 1, help: 'SpO₂ < 90', f: p => { const n = lastOf(p.ser, 6); return n != null && n < 90 ? `SpO₂ ${n}%` : null; }},
     {key: 'ANC', g: 2, help: 'ANC < 500', f: p => { const n = labNum(p, 'ANC'); return n != null && n < 500 ? `ANC ${n}` : null; }},
-    {key: 'PLT', g: 3, help: 'PLT < 20k', f: p => { const n = labNum(p, 'PLT'); return n != null && n < 20 ? `PLT ${Math.round(n)}k` : null; }},
-    {key: 'Hb', g: 3, help: 'Hb < 7', f: p => { const n = labNum(p, 'Hb'); return n != null && n < 7 ? `Hb ${n}` : null; }},
-    {key: 'WBC', g: 3, help: 'WBC > 50k', f: p => { const n = labNum(p, 'WBC'); return n != null && n > 50000 ? `WBC ${(n / 1000).toFixed(1)}k` : null; }},
-    {key: 'K', g: 3, help: 'K < 3.0 或 > 6.0', f: p => { const n = labNum(p, 'K'); return n != null && (n < 3.0 || n > 6.0) ? `K ${n}` : null; }},
-    {key: 'Na', g: 3, help: 'Na < 125 或 > 155', f: p => { const n = labNum(p, 'Na'); return n != null && (n < 125 || n > 155) ? `Na ${n}` : null; }},
-    {key: 'Ca', g: 3, help: 'Ca > 12', f: p => { const n = labNum(p, 'Ca'); return n != null && n > 12 ? `Ca ${n}` : null; }},
-    {key: 'Cre', g: 3, help: 'Cre > 3', f: p => { const n = labNum(p, 'Cre'); return n != null && n > 3 ? `Cre ${n}` : null; }},
-    {key: 'INR', g: 3, help: 'INR > 3', f: p => { const n = labNum(p, 'INR'); return n != null && n > 3 ? `INR ${n}` : null; }},
     {key: 'CX', g: 3, help: '培養：7 天內有陽性', f: p => { const r = firstPos(p); return r ? ('Cx+ ' + String(r.t == null ? '' : r.t).slice(0, 20)).trimEnd() : null; }},
-    {key: 'CRIT', g: 3, help: '病危（CRIT）', f: p => p.crit ? 'CRIT' : null},
-    {key: 'NEW', g: 3, help: '新病人（NEW）', f: p => p.new ? 'NEW' : null},
+    {key: 'Cre', g: 4, help: 'Cre > 3', f: p => { const n = labNum(p, 'Cre'); return n != null && n > 3 ? `Cre ${n}` : null; }},
+    {key: 'K', g: 5, help: 'K < 3.0 或 > 6.0', f: p => { const n = labNum(p, 'K'); return n != null && (n < 3.0 || n > 6.0) ? `K ${n}` : null; }},
+    {key: 'Na', g: 5, help: 'Na < 125 或 > 155', f: p => { const n = labNum(p, 'Na'); return n != null && (n < 125 || n > 155) ? `Na ${n}` : null; }},
+    {key: 'Ca', g: 5, help: 'Ca > 12', f: p => { const n = labNum(p, 'Ca'); return n != null && n > 12 ? `Ca ${n}` : null; }},
+    {key: 'PLT', g: 6, help: 'PLT < 20k', f: p => { const n = labNum(p, 'PLT'); return n != null && n < 20 ? `PLT ${Math.round(n)}k` : null; }},
+    {key: 'Hb', g: 6, help: 'Hb < 7', f: p => { const n = labNum(p, 'Hb'); return n != null && n < 7 ? `Hb ${n}` : null; }},
+    {key: 'WBC', g: 6, help: 'WBC > 50k', f: p => { const n = labNum(p, 'WBC'); return n != null && n > 50000 ? `WBC ${(n / 1000).toFixed(1)}k` : null; }},
+    {key: 'INR', g: 6, help: 'INR > 3', f: p => { const n = labNum(p, 'INR'); return n != null && n > 3 ? `INR ${n}` : null; }},
+    {key: 'CRIT', g: 6, help: '病危（CRIT）', f: p => p.crit ? 'CRIT' : null},
+    {key: 'NEW', g: 6, help: '新病人（NEW）', f: p => p.new ? 'NEW' : null},
   ];
   /* the thresholds as text for the 「優先門檻」 sheet: [{g, name, lines}], generated from the rule table above */
   const priorityHelp = () => GROUPS.map(g => ({g: g.g, name: g.name, lines: RULES.filter(r => r.g === g.g).map(r => r.help)}));
