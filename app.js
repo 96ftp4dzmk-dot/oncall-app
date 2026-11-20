@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v11';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v12';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -342,6 +342,7 @@ document.addEventListener('click',e=>{
  const z=t.closest('[data-z]');if(z){st.zone=z.dataset.z;renderAll();return}
  const gb=t.closest('[data-go]');if(gb){renderDetail(+gb.dataset.go,'pri');return}
  const ck=t.closest('.ck');if(ck){if(ck.dataset.pi!==undefined)togglePatient(+ck.dataset.pi);else toggleCheck(ck.dataset.id);return}
+ if(t.closest('#pdfall')){exportPdf(null);return}
  const tdo=t.closest('.tdo');if(tdo){openNote(+tdo.dataset.note);return}
  const pr=t.closest('.pr');if(pr){renderDetail(+pr.dataset.i,'all');return}
  if(t.closest('#mn')){openMenu();return}
@@ -943,13 +944,13 @@ function lock() {
   if (AUTH) AUTH.fill(0);
   KEYS = null; KEK = null; AUTH = null; USER = null; LOGIN_KEY = null; D = null; P = null; PENDING = null;
   ITEMS = []; CHECKS = []; REQ_SENDING = false;
-  NOTES = {}; UNDO = null; NOTE_I = -1; SW0 = null;
+  NOTES = {}; UNDO = null; NOTE_I = -1; SW0 = null; clearTimeout(NOTE_T); SW_CHART = null;
   if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }   // onstop sees the new session and keeps nothing
   REC = null; RECCHUNKS = [];
   if (AUDIO) { AUDIO.pause(); AUDIO = null; }
   BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};
   st = newSt();
-  ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#todo', '#npd'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
+  ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#todo', '#npd', '#npbar', '#printdoc'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
   $('#np').style.display = 'none'; document.body.style.overflow = '';
   $('#q').value = ''; $('#lp').value = ''; $('#lu').value = ''; REQ_MSG = '';
   $('.tb [data-tab=pri]').textContent = '優先'; $('.tb [data-tab=all]').textContent = '全部'; $('.tb [data-tab=todo]').textContent = '待辦';
@@ -1030,26 +1031,57 @@ function putNote(chart, patch) { NOTES[chart] = Object.assign({}, NOTES[chart] |
 const noteItems = chart => Array.isArray((NOTES[chart] || {}).items) ? NOTES[chart].items : [];
 const noteAudio = chart => Array.isArray((NOTES[chart] || {}).audio) ? NOTES[chart].audio : [];
 
-/* left swipe = 加入待辦, right swipe = 沒什麼問題; a short horizontal drag only, so scrolling is unaffected */
+/* Tinder-style swipe on the patient page: the page follows the finger and tilts; past the threshold it flies off.
+ * Left = 待辦: the notepad slides in (the patient is marked 待辦). Right = 沒問題: next patient. Both can be undone. */
+let SW_CHART = null, SW_ON = false;
 function bindSwipe(chart) {
-  const el = $('#db');
-  el.ontouchstart = e => { const t = e.touches[0]; SW0 = {x: t.clientX, y: t.clientY, t: Date.now()}; };
-  el.ontouchend = e => {
-    const s = SW0; SW0 = null;
-    if (!s || !e.changedTouches.length) return;
-    const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
-    if (Date.now() - s.t > 700 || Math.abs(dx) < 80 || Math.abs(dx) < Math.abs(dy) * 2) return;
-    setTodo(chart, dx < 0);
-  };
+  SW_CHART = chart;
+  if (SW_ON) return;
+  SW_ON = true;
+  const el = $('#detail'), lab = $('#swl'), TH = 110;
+  let s = null, dir = null;
+  const reset = anim => { el.style.transition = anim ? 'transform .2s ease, opacity .2s ease' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl'; };
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || $('#np').style.display === 'block') { s = null; return; }
+    const t = e.touches[0]; s = {x: t.clientX, y: t.clientY}; dir = null; el.style.transition = 'none';
+  }, {passive: true});
+  el.addEventListener('touchmove', e => {
+    if (!s) return;
+    const t = e.touches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (dir === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) dir = Math.abs(dx) > Math.abs(dy) * 1.5 ? 'h' : 'v';
+    if (dir !== 'h') return;
+    e.preventDefault();
+    el.style.transform = `translateX(${dx}px) rotate(${dx / 30}deg)`;
+    el.style.opacity = String(Math.max(.4, 1 - Math.abs(dx) / 600));
+    lab.textContent = dx < 0 ? '待辦' : '沒問題';
+    lab.className = 'swl on ' + (dx < 0 ? 'l' : 'r') + (Math.abs(dx) > TH ? ' go' : '');
+  }, {passive: false});
+  el.addEventListener('touchend', e => {
+    const t = e.changedTouches && e.changedTouches[0], from = s; s = null;
+    if (!from || dir !== 'h' || !t) { reset(false); return; }
+    const dx = t.clientX - from.x;
+    if (Math.abs(dx) < TH) { reset(true); return; }
+    el.style.transition = 'transform .2s ease, opacity .2s ease';
+    el.style.transform = `translateX(${dx < 0 ? -140 : 140}vw) rotate(${dx < 0 ? -18 : 18}deg)`; el.style.opacity = '0';
+    lab.className = 'swl';
+    setTimeout(() => { reset(false); swipeDone(SW_CHART, dx < 0); }, 200);
+  }, {passive: true});
+  el.addEventListener('touchcancel', () => { s = null; reset(true); }, {passive: true});
 }
-function setTodo(chart, on) {
+function swipeDone(chart, left) {
+  const pi = st.order[st.cur];
+  if (left) { setTodo(chart, true, null); const i = P.findIndex(p => p.chart === chart); openNote(i >= 0 ? i : pi, true); }
+  else { setTodo(chart, false, pi); if (st.cur < st.order.length - 1) go(1); else closeDetail(); }
+}
+/* on = 待辦 / off = 沒問題. pi = the patient page to come back to when the 復原 button is used (right swipe) */
+function setTodo(chart, on, pi) {
   if (!chart) return;
-  const cur = NOTES[chart] || {};
-  if ((cur.todo === true) === on) { toast(on ? '已在待辦清單' : '已是沒什麼問題'); return; }
-  UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null};
-  putNote(chart, {todo: on});
+  const cur = NOTES[chart] || {}, changed = (cur.todo === true) !== on;
+  if (!changed && on) return;
+  UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null, pi: pi == null ? null : pi};
+  if (changed) putNote(chart, {todo: on});
   renderTodo(); renderTabs();
-  toastUndo(on ? '已加入待辦' : '沒什麼問題');
+  toastUndo(on ? '已加入待辦' : '沒問題');
 }
 function undoNotes() {
   const u = UNDO;
@@ -1058,6 +1090,8 @@ function undoNotes() {
   if (u.before == null) delete NOTES[u.chart]; else NOTES[u.chart] = JSON.parse(u.before);
   saveNotes(); renderTodo(); renderTabs();
   $('#toast').classList.remove('on');
+  if (NOTE_I >= 0 && !(NOTES[P[NOTE_I].chart] || {}).todo) closeNote();
+  if (u.pi != null && $('#detail').style.display === 'block') renderDetail(u.pi);
 }
 /* toast with a 復原 button for 5 s (the pointer-events of the button are re-enabled in the CSS) */
 function toastUndo(text) {
@@ -1069,70 +1103,132 @@ function toastUndo(text) {
   $('#undo').onclick = undoNotes;
 }
 
-/* 待辦 tab: identity, attending and the to-do text only */
+const ymdLocal = ms => { const d = new Date(Number(ms)); return `${d.getMonth() + 1}/${d.getDate()}`; };
+const hmLocal = ms => { const d = new Date(Number(ms)); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+
+/* 待辦 tab: identity, attending and the to-do text only, plus 輸出 PDF */
 function renderTodo() {
   const el = $('#todo');
   if (!el || !P) return;
   const idx = todoIdx();
-  if (!idx.length) { el.innerHTML = '<div class="empty">沒有待辦<small>在病人頁左滑即可加入待辦；右滑表示沒什麼問題</small></div>'; return; }
-  el.innerHTML = idx.map(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done);
-    return `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="id">${esc(p.chart)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
+  if (!idx.length) { el.innerHTML = '<div class="empty">沒有待辦<small>在病人頁左滑即可加入待辦；右滑表示沒問題</small></div>'; return; }
+  el.innerHTML = `<div class="tdh"><span>${idx.length} 位 · ${esc(ymdLocal(Date.now()))}</span><button id="pdfall" type="button">輸出 PDF</button></div>` + idx.map(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done && x.t);
+    return `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
   }).join('');
 }
 
-/* notepad page (checklist + recordings) */
-function openNote(i) {
+/* notepad page: Apple-Notes style checklist (Enter = next check, done = strike-through and moves down) + record bar */
+function openNote(i, slide) {
   if (!P || !P[i]) return;
   NOTE_I = i;
   $('#npt').textContent = `${P[i].bed} ${P[i].name}`;
-  $('#np').style.display = 'block'; document.body.style.overflow = 'hidden';
+  const np = $('#np');
+  np.style.display = 'block'; document.body.style.overflow = 'hidden'; np.scrollTop = 0;
+  np.classList.remove('slide');
+  if (slide) { void np.offsetWidth; np.classList.add('slide'); }
   drawNote();
 }
 function closeNote() {
+  commitNew();
   if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }
-  $('#np').style.display = 'none'; document.body.style.overflow = ''; NOTE_I = -1;
-  renderTodo(); renderTabs();
+  $('#np').style.display = 'none'; NOTE_I = -1;
+  if ($('#detail').style.display !== 'block') document.body.style.overflow = '';
+  saveNotes(); renderTodo(); renderTabs();
 }
-function drawNote() {
+function noteRow(x) {
+  const t = esc(x.t);
+  return `<li class="${x.done ? 'done' : ''}"><span class="cbx" data-ntoggle="${esc(x.id)}" role="checkbox" aria-checked="${!!x.done}"></span><input class="ni" data-id="${esc(x.id)}" type="text" enterkeyhint="next" maxlength="200" autocomplete="off" value="${t}"${x.done ? ' readonly' : ''}>${x.done ? `<button type="button" class="nd" data-ndel="${esc(x.id)}" aria-label="刪除">×</button>` : ''}</li>`;
+}
+/* focusId: an item id, '' = the empty line at the end, undefined = leave the focus alone */
+function drawNote(focusId) {
   const p = P && P[NOTE_I];
   if (!p) return;
-  const items = noteItems(p.chart), aud = noteAudio(p.chart);
-  $('#npd').innerHTML = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2><div class="sub">${esc(p.chart)} · 主治 ${esc(p.vs || '–')}</div></div>
-    <div class="blk"><h3>待辦事項</h3>
-      <form id="npf" class="npf" autocomplete="off"><input id="npi" type="text" maxlength="200" placeholder="新增待辦…"><button type="submit">加入</button></form>
-      <ul class="cl">${items.map(x => `<li class="${x.done ? 'done' : ''}"><span class="cbx" data-ntoggle="${esc(x.id)}" role="checkbox" aria-checked="${!!x.done}"></span><span class="nt">${esc(x.t)}</span><button type="button" class="nd" data-ndel="${esc(x.id)}" aria-label="刪除">×</button></li>`).join('')}</ul>
-    </div>
-    <div class="blk"><h3>錄音</h3>
-      <button id="rec" type="button" class="rec">${REC ? '■ 停止錄音' : '● 錄音'}</button>
-      <ul class="al">${aud.map(a => `<li><button type="button" class="pl" data-play="${esc(a.id)}">▶ ${fmtT(a.ts)} · ${Number(a.s) || 0} 秒</button><button type="button" class="nd" data-adel="${esc(a.id)}" aria-label="刪除錄音">×</button></li>`).join('')}</ul>
-    </div>`;
+  const items = noteItems(p.chart), open = items.filter(x => !x.done), done = items.filter(x => x.done);
+  $('#npd').innerHTML = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2><div class="sub">主治 ${esc(p.vs || '–')} · ${esc(ymdLocal(Date.now()))}</div></div>
+    <ul class="cl">${open.map(noteRow).join('')}<li class="new"><span class="cbx"></span><input class="ni" id="npnew" data-id="" type="text" enterkeyhint="done" maxlength="200" autocomplete="off" placeholder="新增待辦…"></li></ul>
+    ${done.length ? `<div class="donehd">已完成 ${done.length}</div><ul class="cl dn">${done.map(noteRow).join('')}</ul>` : ''}`;
+  drawBar();
+  if (focusId === '') { const n = $('#npnew'); if (n) n.focus(); }
+  else if (focusId) { const el = $('#npd').querySelector(`.ni[data-id="${CSS.escape(focusId)}"]`); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }
 }
-function addNoteItem(text) {
-  const p = P && P[NOTE_I], t = String(text == null ? '' : text).trim();
-  if (!p || !t) return;
-  putNote(p.chart, {items: noteItems(p.chart).concat([{id: NOTE_ID(), t: t.slice(0, 200), done: false}])});
-  drawNote();
+function drawBar() {
+  const p = P && P[NOTE_I], bar = $('#npbar');
+  if (!p || !bar) return;
+  const aud = noteAudio(p.chart);
+  bar.innerHTML = (aud.length ? `<div class="chips">${aud.map(a => `<span class="ach"><button type="button" class="pl" data-play="${esc(a.id)}">▶ ${esc(ymdLocal(a.ts))} ${esc(hmLocal(a.ts))} · ${Number(a.s) || 0}s</button><button type="button" class="nd" data-adel="${esc(a.id)}" aria-label="刪除錄音">×</button></span>`).join('')}</div>` : '')
+    + `<button id="rec" type="button" class="rec${REC ? ' on' : ''}">${REC ? '■ 停止錄音' : '● 錄音'}</button>`;
 }
-function toggleNoteItem(id) {
-  const p = P && P[NOTE_I]; if (!p) return;
-  putNote(p.chart, {items: noteItems(p.chart).map(x => x.id === id ? Object.assign({}, x, {done: !x.done}) : x)});
-  drawNote();
+let NOTE_T = null;
+const noteSaveSoon = () => { clearTimeout(NOTE_T); NOTE_T = setTimeout(saveNotes, 500); };
+const newItem = t => ({id: NOTE_ID(), t: t || '', done: false, ts: Date.now()});
+/* the empty line at the end becomes a real item (no redraw: a tap on another control must not be swallowed) */
+function commitNew() {
+  const p = P && P[NOTE_I], n = $('#npnew');
+  if (!p || !n) return null;
+  const t = n.value.trim();
+  if (!t) return null;
+  const it = newItem(t.slice(0, 200));
+  putNote(p.chart, {items: noteItems(p.chart).concat([it])});
+  n.value = '';
+  return it;
 }
-function delNoteItem(id) {
-  const p = P && P[NOTE_I]; if (!p) return;
-  putNote(p.chart, {items: noteItems(p.chart).filter(x => x.id !== id)});
-  drawNote();
-}
+function noteEdit(fn) { const p = P && P[NOTE_I]; if (!p) return; putNote(p.chart, {items: fn(noteItems(p.chart))}); }
+function toggleNoteItem(id) { commitNew(); noteEdit(L => L.map(x => x.id === id ? Object.assign({}, x, {done: !x.done}) : x)); drawNote(); }
+function delNoteItem(id) { noteEdit(L => L.filter(x => x.id !== id)); drawNote(); }
 $('#npb').onclick = closeNote;
-$('#npd').addEventListener('submit', e => { if (e.target && e.target.id === 'npf') { e.preventDefault(); addNoteItem($('#npi').value); } });
+$('#npp').onclick = () => exportPdf(NOTE_I);
+$('#npd').addEventListener('input', e => {
+  const t = e.target, p = P && P[NOTE_I];
+  if (!p || !t.classList.contains('ni') || !t.dataset.id) return;
+  const it = noteItems(p.chart).find(x => x.id === t.dataset.id);
+  if (it) { it.t = t.value.slice(0, 200); noteSaveSoon(); }
+});
+$('#npd').addEventListener('keydown', e => {
+  const t = e.target, p = P && P[NOTE_I];
+  if (!p || !t.classList.contains('ni')) return;
+  const id = t.dataset.id;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (!id) { const it = commitNew(); if (it) drawNote(''); else t.blur(); return; }
+    if (!t.value.trim()) { t.blur(); return; }
+    const L = noteItems(p.chart).slice(), at = L.findIndex(x => x.id === id), nx = newItem('');
+    L.splice(at + 1, 0, nx); putNote(p.chart, {items: L}); drawNote(nx.id);
+  } else if (e.key === 'Backspace' && id && t.value === '') {
+    e.preventDefault();
+    const L = noteItems(p.chart).filter(x => !x.done), at = L.findIndex(x => x.id === id);
+    delNoteItem(id);
+    drawNote(at > 0 ? L[at - 1].id : '');
+  }
+});
+$('#npd').addEventListener('focusout', e => {       // an item left empty is dropped (no redraw: the next tap must work)
+  const t = e.target, p = P && P[NOTE_I];
+  if (!p || !t.classList || !t.classList.contains('ni') || !t.dataset.id || t.value.trim()) return;
+  putNote(p.chart, {items: noteItems(p.chart).filter(x => x.id !== t.dataset.id)});
+  const li = t.closest('li'); if (li) li.remove();
+});
 $('#npd').addEventListener('click', e => {
+  const tg = e.target.closest('[data-ntoggle]'); if (tg) { toggleNoteItem(tg.dataset.ntoggle); return; }
+  const dl = e.target.closest('[data-ndel]'); if (dl) delNoteItem(dl.dataset.ndel);
+});
+$('#npbar').addEventListener('click', e => {
   const t = e.target;
-  if (t.id === 'rec') { toggleRec(); return; }
-  const tg = t.closest('[data-ntoggle]'); if (tg) { toggleNoteItem(tg.dataset.ntoggle); return; }
-  const dl = t.closest('[data-ndel]'); if (dl) { delNoteItem(dl.dataset.ndel); return; }
+  if (t.id === 'rec') { commitNew(); toggleRec(); return; }
   const pl = t.closest('[data-play]'); if (pl) { playRec(pl.dataset.play); return; }
   const ad = t.closest('[data-adel]'); if (ad) delRec(ad.dataset.adel);
 });
+
+/* 輸出 PDF: a print sheet (bed, name, attending, to-do items, date); on the phone use Share / Print -> Save as PDF */
+function exportPdf(only) {
+  const idx = only != null && only >= 0 ? [only] : todoIdx();
+  if (!idx.length) { toast('沒有待辦可輸出'); return; }
+  commitNew();
+  const sheet = $('#printdoc');
+  sheet.innerHTML = `<h1>待辦事項 · ${esc(ymdLocal(Date.now()))}</h1>` + idx.map(i => { const p = P[i], its = noteItems(p.chart).filter(x => x.t);
+    return `<section><div class="ph"><b>${esc(p.bed)}</b> ${esc(p.name)}<span>主治：${esc(p.vs || '–')}</span></div>${its.length ? `<ul>${its.map(x => `<li class="${x.done ? 'd' : ''}"><i>${x.done ? '☑' : '☐'}</i><span>${esc(x.t)}</span><small>${esc(ymdLocal(x.ts || Date.now()))}</small></li>`).join('')}</ul>` : '<p>（無待辦文字）</p>'}</section>`;
+  }).join('');
+  window.onafterprint = () => { sheet.innerHTML = ''; };
+  setTimeout(() => { try { window.print(); } catch (e) { toast('此瀏覽器無法列印'); } }, 60);
+}
 
 /* recording: MediaRecorder; the blob is sealed before it is stored, and dropped when the session was locked meanwhile */
 async function toggleRec() {
@@ -1154,11 +1250,11 @@ async function toggleRec() {
     stream.getTracks().forEach(t => t.stop());
     const type = rec.mimeType || mime || 'audio/webm', chunks = RECCHUNKS, secs = Math.max(1, Math.round((Date.now() - RECT0) / 1000));
     REC = null; RECCHUNKS = [];
-    if (NOTE_I >= 0) drawNote();
+    if (NOTE_I >= 0) drawBar();
     if (session === SESSION && chunks.length) saveRecording(session, chart, new Blob(chunks, {type: type}), secs, type);
   };
   rec.start(1000);
-  drawNote();
+  drawBar();
 }
 async function saveRecording(session, chart, blob, secs, type) {
   const k = checksKey();
@@ -1174,7 +1270,7 @@ async function saveRecording(session, chart, blob, secs, type) {
     if (session !== SESSION) { try { await removeBlob('audio:' + id); } catch (e) { /* ignore */ } return; }
     putNote(chart, {audio: noteAudio(chart).concat([{id: id, ts: Date.now(), s: secs, mime: type}])});
   } catch (e) { toast('錄音儲存失敗'); return; }
-  if (NOTE_I >= 0) drawNote();
+  if (NOTE_I >= 0) drawBar();
 }
 async function playRec(id) {
   let box = null;
@@ -1195,7 +1291,7 @@ async function delRec(id) {
   if (!p) return;
   putNote(p.chart, {audio: noteAudio(p.chart).filter(a => a.id !== id)});
   try { await removeBlob('audio:' + id); } catch (e) { /* ignore */ }
-  drawNote();
+  drawBar();
 }
 
 /* ================= boot ================= */

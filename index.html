@@ -247,6 +247,41 @@ details.tg .in{padding:0 0 12px 8px}
 .sheet{border-radius:24px 24px 0 0}.dbox{border-radius:22px}
 .cl li{margin:0 0 8px;padding:0 6px 0 12px;border:1px solid var(--line2);border-radius:var(--r2);background:var(--surf)}
 .rq,.lo{border-color:var(--line2)}
+
+/* ---- v12: Tinder swipe label, Notes-style checklist, bottom record bar, print sheet ---- */
+.swl{position:fixed;top:30%;left:50%;z-index:40;padding:8px 22px;border:3px solid currentColor;border-radius:14px;font:700 26px var(--serif);letter-spacing:.08em;opacity:0;pointer-events:none;transform:translateX(-50%)}
+.swl.on{opacity:.8}.swl.l{color:var(--acc);transform:translateX(-50%) rotate(-8deg)}.swl.r{color:var(--okc);transform:translateX(-50%) rotate(8deg)}.swl.go{opacity:1}
+#np.slide{animation:npin .26s ease-out}@keyframes npin{from{transform:translateX(100%)}to{transform:none}}
+#npp{margin-left:auto;min-height:40px;padding:0 14px!important;border:1px solid var(--line)!important;border-radius:999px;background:var(--surf)!important;color:var(--ink)!important;font:500 13px var(--sans)!important}
+#np .body{padding-bottom:24px;min-height:calc(100vh - 140px)}
+#np .cl li{margin:0;padding:0 4px;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:none;box-shadow:none;min-height:46px}
+#np .cl .cbx{border-radius:50%}
+.ni{flex:1;min-width:0;height:44px;padding:0;border:0;background:none;color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
+.cl li.done .ni{color:var(--sub);text-decoration:line-through}
+.cl li.new .cbx{opacity:.3}
+#npbar{position:sticky;bottom:0;z-index:4;padding:8px 14px calc(8px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line)}
+#npbar .chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
+.ach{display:flex;flex:none;align-items:center;border:1px solid var(--line);border-radius:999px;background:var(--surf)}
+.ach .pl{flex:none;height:36px;padding:0 4px 0 12px;border:0;background:none;font:13px var(--sans)}
+.ach .nd{width:32px;height:36px;font-size:16px}
+#npbar .rec{height:44px;margin:0}
+.rec.on{background:var(--cv-bg);border-color:var(--cv-solid)}
+.tdh{display:flex;align-items:center;justify-content:space-between;padding:6px 20px 8px;font-size:13px;color:var(--sub)}
+.tdh button{min-height:40px;padding:0 16px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--ink);font:500 13px var(--sans)}
+#printdoc{display:none}
+@media print{
+ html,body{background:#fff!important}
+ body>*:not(#printdoc){display:none!important}
+ #printdoc{display:block!important;color:#000;font:12pt/1.5 var(--sans)}
+ #printdoc h1{margin:0 0 10pt;font:600 16pt var(--sans)}
+ #printdoc section{margin:0 0 12pt;break-inside:avoid}
+ #printdoc .ph{display:flex;gap:8pt;align-items:baseline;padding-bottom:3pt;border-bottom:1pt solid #000;font-size:13pt}
+ #printdoc .ph span{margin-left:auto;font-size:11pt}
+ #printdoc ul{margin:4pt 0 0;padding:0;list-style:none}
+ #printdoc li{display:flex;gap:6pt;padding:2pt 0}
+ #printdoc li i{font-style:normal}#printdoc li span{flex:1}#printdoc li small{color:#555}
+ #printdoc li.d span{text-decoration:line-through;color:#555}
+}
 </style></head><body>
 <div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
@@ -299,12 +334,14 @@ details.tg .in{padding:0 0 12px 8px}
   <div class="nav"><button id="back" type="button">‹ 優先</button><div class="pos" id="dt"></div></div>
   <div class="body" id="db"></div>
 </div>
-<div id="np"><div class="nav"><button id="npb" type="button">‹ 待辦</button><div class="pos" id="npt"></div></div>
-  <div class="body" id="npd"></div></div>
+<div id="np"><div class="nav"><button id="npb" type="button">‹ 待辦</button><div class="pos" id="npt"></div><button id="npp" type="button">輸出 PDF</button></div>
+  <div class="body" id="npd"></div><div id="npbar"></div></div>
 <div id="foot" style="display:none"><button id="clr" type="button" class="lo">清除本機資料</button></div>
 <div id="menu" class="ov"><div class="sheet"><button type="button" data-act="help">優先門檻</button><button type="button" data-act="lock">鎖定</button><button type="button" class="danger" data-act="clear">清除本機資料</button><div class="ver" id="ver"></div></div></div>
 <div id="dlg" class="ov"><div class="dbox"><p id="dtx"></p><div class="row2"><button type="button" id="dno">取消</button><button type="button" id="dok" class="ok">確定</button></div></div></div>
 <div id="toast"></div>
+<div id="swl" class="swl"></div>
+<div id="printdoc"></div>
 <script src="config.js"></script>
 <script src="crypto.js"></script>
 <script src="logic.js"></script>
