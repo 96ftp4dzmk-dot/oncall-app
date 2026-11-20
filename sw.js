@@ -1,14 +1,14 @@
 /* 值班手冊 PWA service worker: cache-first for the app shell only. Bump SHELL_V whenever a shell file changes.
  * The Apps Script data/status responses (script.google.com / googleusercontent) are never cached here:
  * the encrypted payload lives in IndexedDB (store.js). */
-const SHELL_V = 'v39';
+const SHELL_V = 'v40';
 const CACHE = 'oncall-shell-' + SHELL_V;
 const SHELL = ['./', './index.html', './config.js', './crypto.js', './logic.js', './store.js', './app.js',
                './manifest.webmanifest', './icon-192.png', './icon-512.png',
                './apple-touch-icon.png', './icon.svg'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, {cache: 'reload'})))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

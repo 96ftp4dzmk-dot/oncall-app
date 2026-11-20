@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v39';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v40';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -423,7 +423,7 @@ document.addEventListener('click',e=>{
  if(t.closest('#mn')){openMenu();return}
  const ac=t.closest('[data-act]');
  if(ac){const a=ac.dataset.act;
-  if(a==='lock'){closeMenu();lock()}else if(a==='clear'){closeMenu();clearLocal()}else if(a==='help'){closeMenu();ask(helpText(),true)}else if(a==='reopen')lock();return}
+  if(a==='lock'){closeMenu();lock()}else if(a==='import'){closeMenu();$('#impf').value='';$('#impf').click()}else if(a==='clear'){closeMenu();clearLocal()}else if(a==='help'){closeMenu();ask(helpText(),true)}else if(a==='reopen')lock();return}
  if(t.id==='menu')closeMenu()});
 $('#q').addEventListener('input',e=>{if(!P)return;st.q=e.target.value;renderAll()});
 $('#back').onclick=closeDetail;
@@ -1242,6 +1242,55 @@ function drawBar() {
   bar.innerHTML = (aud.length ? `<div class="chips">${aud.map(a => `<span class="ach"><button type="button" class="pl" data-play="${esc(a.id)}">▶ ${esc(ymdLocal(a.ts))} ${esc(hmLocal(a.ts))} · ${Number(a.s) || 0}s</button><button type="button" class="nd" data-adel="${esc(a.id)}" aria-label="刪除錄音">×</button></span>`).join('')}</div>` : '')
     + `<button id="rec" type="button" class="rec${REC ? ' on' : ''}">${REC ? '■ 停止錄音' : '● 錄音'}</button>`;
 }
+/* ---- 匯入特殊交班: a .txt / .csv / .tsv file, one patient per row: 病歷號 or 床號, then the text. The text is appended to
+ * that patient's 特殊交班事項 (never overwrites; a row already present is skipped). Everything stays on this phone. ---- */
+function parseImportRows(text) {
+  text = String(text || '').replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const first = text.split('\n').find(l => l.trim()) || '';
+  const delim = first.includes('\t') ? '\t' : (first.includes(',') ? ',' : '');
+  const rows = []; let row = [], cur = '', q = false;
+  const endCell = () => { row.push(cur); cur = ''; };
+  const endRow = () => { endCell(); if (row.some(c => c.trim())) rows.push(row.map(c => c.trim())); row = []; };
+  if (!delim) return text.split('\n').map(l => l.trim()).filter(Boolean).map(l => { const m = l.match(/^(\S+?)[\s:：,，]+(.*)$/); return m ? [m[1], m[2].trim()] : [l]; });
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"' && !cur) q = true;
+    else if (c === delim) endCell();
+    else if (c === '\n') endRow();
+    else cur += c;
+  }
+  endRow();
+  return rows;
+}
+const impKey = s => String(s || '').toUpperCase().replace(/[\s\-_]/g, '').replace(/^0+(?=\d)/, '');
+function importSpecial(text) {
+  if (!P || !P.length) return {ok: 0, dup: 0, miss: 0, rows: 0};
+  const byKey = new Map();
+  P.forEach(p => { [p.chart, p.bed].forEach(k => { const x = impKey(k); if (x && !byKey.has(x)) byKey.set(x, p); }); });
+  const rows = parseImportRows(text); let ok = 0, dup = 0, miss = 0, hdr = 0;
+  const touched = new Set();
+  rows.forEach(r => {
+    const p = byKey.get(impKey(r[0])), t = r.slice(1).filter(Boolean).join(' ').trim();
+    if (!p) { if (!ok && !miss && !hdr && /病歷|床|chart|bed/i.test(r[0])) hdr++; else miss++; return; }
+    if (!t) { miss++; return; }
+    const n = Object.assign({}, NOTES[p.chart] || {}), cur = n.sp || '';
+    if (('\n' + cur + '\n').includes('\n' + t + '\n')) { dup++; return; }
+    n.sp = cur ? cur + '\n' + t : t; NOTES[p.chart] = n; touched.add(p.chart); ok++;
+  });
+  if (touched.size) saveNotes();
+  return {ok, dup, miss, rows: rows.length - hdr, patients: touched.size};
+}
+$('#impf').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0]; if (!f) return;
+  if (f.size > 262144) { ask('檔案太大（上限 256 KB）。', true); return; }
+  const buf = await f.arrayBuffer(); let text;
+  try { text = new TextDecoder('utf-8', {fatal: true}).decode(buf); } catch (er) { try { text = new TextDecoder('big5').decode(buf); } catch (er2) { text = ''; } }
+  const r = importSpecial(text);
+  if (!r.rows) { ask('檔案裡沒有可匯入的資料。格式：每列「病歷號或床號, 內容」（逗號、Tab 或冒號分隔）。', true); return; }
+  if ($('#detail').style.display === 'block' && st.order && st.order[st.cur] != null) renderDetail(st.order[st.cur]);
+  toast(`匯入 ${r.ok} 筆（${r.patients || 0} 位病人）` + (r.dup ? `，重複略過 ${r.dup}` : '') + (r.miss ? `，對不到 ${r.miss}` : ''));
+});
 let NOTE_T = null;
 const noteSaveSoon = () => { clearTimeout(NOTE_T); NOTE_T = setTimeout(saveNotes, 500); };
 const newItem = t => ({id: NOTE_ID(), t: t || '', done: false, ts: Date.now()});
