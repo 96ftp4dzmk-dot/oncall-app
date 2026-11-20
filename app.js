@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v28';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v30';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -165,6 +165,7 @@ function renderAll() {
   const q = st.q.replace(/\s+/g, '').toLowerCase();   // spaces (incl. full-width) are ignored on both sides
   $('#zone').innerHTML = ['內圍', '外圍'].map(z => `<button class="${st.zone === z ? 'on' : ''}" data-z="${z}">${z} ${P.filter(p => p.zone === z).length}</button>`).join('');
   st.idx = P.map((p, i) => i).filter(i => { const p = P[i]; return p.zone === st.zone && (!q || (p.bed + p.chart + p.name + p.dept).replace(/\s+/g, '').toLowerCase().includes(q)); });
+  st.idx.sort((a, b) => cmpWard(P[a], P[b]) || a - b);   // 第二 → 急診 → 第一 大樓, high ward first
   if (!st.idx.length) { $('#cards').innerHTML = '<div class="empty">沒有符合的病人</div>'; return; }
   const by = {};
   ITEMS.forEach(it => { (by[it.pi] = by[it.pi] || []).push(it); });
@@ -1120,6 +1121,9 @@ function bindSwipe(chart) {
 function swipeDone(chart, left) {
   const pi = st.order[st.cur];
   if (left) { setTodo(chart, true, null); const i = P.findIndex(p => p.chart === chart); openNote(i >= 0 ? i : pi, true); }
+  else if ((NOTES[chart] || {}).todo === true) {   // already 待辦: a right swipe must not clear the to-do just made
+    toast('仍在待辦中，未變更'); if (st.cur < st.order.length - 1) go(1); else closeDetail();
+  }
   else { setTodo(chart, false, pi); if (st.cur < st.order.length - 1) go(1); else closeDetail(); }
 }
 /* on = 待辦 / off = 已完成. pi = the patient page to come back to when the 復原 button is used (right swipe) */
@@ -1164,13 +1168,58 @@ function renderTodo() {
   const SORTS = [['bed', '床號'], ['vs', '主治'], ['date', '日期'], ['zone', '內外圍']];
   let h = `<div class="tdh"><span>${idx.length} 位 · ${esc(ymdLocal(Date.now()))}</span><button class="docb" data-doc="todo" type="button">輸出 Doc</button></div>`
         + `<div class="tds">${SORTS.map(s => `<button type="button" data-tsort="${s[0]}" class="${TODO_SORT === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</div>`;
+  h += '<div class="swh">左滑即可刪除待辦</div>';
   let last = null;
   idx.forEach(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done && x.t), g = todoGroup(p);
     if (g !== null && g !== last) { h += `<div class="tdg">${esc(g)}</div>`; last = g; }
     h += `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
   });
   el.innerHTML = h;
+  if (!TODO_SWIPE_ON) bindTodoSwipe();
 }
+/* 待辦 tab: 左滑一列即刪除該待辦（與病人頁右滑「已完成」結果相同），5 秒內可按「復原」 */
+let TODO_SWIPE_ON = false;
+function deleteTodo(chart) {
+  if (!chart) return;
+  UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null, pi: null};
+  putNote(chart, {todo: false});
+  renderTodo(); renderTabs();
+  toastUndo('已刪除待辦');
+}
+function bindTodoSwipe() {
+  const el = $('#todo'), TH = 90, FLICK_PX = 40, FLICK_V = .45;   // px, px, px/ms
+  if (!el) return;
+  TODO_SWIPE_ON = true;
+  let s = null;
+  el.addEventListener('touchstart', e => {
+    const row = e.target.closest('.tdo');
+    if (!row || e.touches.length !== 1) { s = null; return; }
+    const t = e.touches[0];
+    s = {row: row, x: t.clientX, y: t.clientY, t: Date.now(), dir: null};
+    row.style.transition = 'none';
+  }, {passive: true});
+  el.addEventListener('touchmove', e => {
+    if (!s) return;
+    const t = e.touches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (s.dir === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) s.dir = Math.abs(dx) >= Math.abs(dy) * 1.5 ? 'h' : 'v';
+    if (s.dir !== 'h') return;                       // vertical = normal scrolling
+    s.row.style.transform = `translateX(${Math.min(0, dx)}px)`;   // leftwards only
+  }, {passive: true});
+  el.addEventListener('touchend', e => {
+    const from = s; s = null;
+    if (!from) return;
+    const row = from.row, t = e.changedTouches && e.changedTouches[0];
+    const dx = t ? t.clientX - from.x : 0, dt = Date.now() - from.t;
+    const hit = from.dir === 'h' && dx < 0 && (dx <= -TH || (dx <= -FLICK_PX && -dx / Math.max(dt, 1) >= FLICK_V));
+    const i = +row.dataset.note;
+    if (!hit || !P || !P[i]) { row.style.transition = 'transform .2s ease'; row.style.transform = ''; return; }
+    row.style.transition = 'transform .2s ease'; row.style.transform = 'translateX(-110%)';
+    const chart = P[i].chart;
+    setTimeout(() => deleteTodo(chart), 200);
+  }, {passive: true});
+  el.addEventListener('touchcancel', () => { s = null; renderTodo(); }, {passive: true});
+}
+
 /* 待辦排序：床號（預設，P 原順序）/ 主治 / 日期（加入待辦的日子，新到舊）/ 內外圍；清單與輸出 Doc 共用 */
 let TODO_SORT = 'bed';
 const todoDay = p => { const t = (NOTES[p.chart] || {}).td; return t ? isoDay(t) : '更早'; };
@@ -1184,9 +1233,16 @@ function todoSorted() {
 }
 
 /* notepad page: Apple-Notes style checklist (Enter = next check, done = strike-through and moves down) + record bar */
+/* 記事本頁不因系統返回手勢（右滑）回到待辦：返回事件會把記事本重新推回來，只有「‹ 待辦」能關閉 */
+let NOTE_PUSHED = false, NOTE_SILENT = false;
+window.addEventListener('popstate', () => {
+  if (NOTE_SILENT) { NOTE_SILENT = false; return; }          // our own history.back() from closeNote
+  if (NOTE_PUSHED && NOTE_I >= 0) history.pushState({np: 1}, '');
+});
 function openNote(i, slide) {
   if (!P || !P[i]) return;
   NOTE_I = i;
+  if (!NOTE_PUSHED) { history.pushState({np: 1}, ''); NOTE_PUSHED = true; }
   $('#npt').textContent = `${P[i].bed} ${P[i].name}`;
   const np = $('#np');
   np.style.display = 'block'; document.body.style.overflow = 'hidden'; np.scrollTop = 0;
@@ -1197,6 +1253,7 @@ function openNote(i, slide) {
 function closeNote() {
   commitNew();
   if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }
+  if (NOTE_PUSHED) { NOTE_PUSHED = false; NOTE_SILENT = true; history.back(); }   // drop the note's history entry quietly
   $('#np').style.display = 'none'; NOTE_I = -1;
   if ($('#detail').style.display !== 'block') document.body.style.overflow = '';
   saveNotes(); renderTodo(); renderTabs();

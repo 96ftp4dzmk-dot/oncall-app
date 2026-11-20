@@ -75,8 +75,7 @@
         if (txt != null) out.push({g: r.g, key: r.key, id: `${p.chart}|${r.key}|${txt}`, pi: pi, txt: txt, _ri: ri});
       });
     });
-    const bed = it => String(P[it.pi].bed == null ? '' : P[it.pi].bed);
-    out.sort((a, b) => a.g - b.g || (bed(a) < bed(b) ? -1 : bed(a) > bed(b) ? 1 : 0) || a.pi - b.pi || a._ri - b._ri);
+    out.sort((a, b) => a.g - b.g || cmpWard(P[a.pi], P[b.pi]) || a.pi - b.pi || a._ri - b._ri);
     const seen = new Set();                                  // two patients sharing (or lacking) a chart number must not share tick ids
     out.forEach(it => { delete it._ri; if (seen.has(it.id)) it.id += '#' + it.pi; seen.add(it.id); });
     return out;
@@ -100,6 +99,12 @@
   }
   /* patient indexes in order of first appearance = prev/next order of the priority tab */
   const patientsInOrder = items => Array.from(new Set(items.map(i => i.pi)));
+  /* ward order by building (VGHTC floor map): 0 = 第二醫療大樓 (內圍), 1 = 急診大樓, 2 = 第一醫療大樓.
+     ward number comes from bed "W106-05"; within a building the higher ward number comes first, then bed */
+  const wardNo = p => { const m = /^\s*W?(\d+)/i.exec(String(p && p.bed != null ? p.bed : '')); return m ? +m[1] : 0; };
+  const SECOND_BLD = [66, 76, 86, 96, 106, 116, 131];
+  const bldRank = p => { const w = wardNo(p); if (w >= 30 && w <= 39) return 1; if (SECOND_BLD.includes(w) || (p && p.zone === '內圍')) return 0; return 2; };
+  const cmpWard = (a, b) => bldRank(a) - bldRank(b) || wardNo(b) - wardNo(a) || String(a.bed == null ? '' : a.bed).localeCompare(String(b.bed == null ? '' : b.bed));
 
   /* normal ranges [lo, hi] for the mild-abnormal grey text of the 「全部」 list (display only, never a priority) */
   const NORMAL = {WBC: [4000, 11000], ANC: [1500, Infinity], Hb: [12, Infinity], PLT: [150, 450], Cre: [0, 1.3], BUN: [0, 20],
@@ -143,7 +148,7 @@
     return null;
   }
 
-  const api = {GROUPS, priorityHelp, cleanSer, shortStamp, priorityItems, toggleId, pruneChecks, splitItems, patientsInOrder, labArrow, stripSpec, stripY, stampAgeH, pickBanner};
+  const api = {GROUPS, priorityHelp, cleanSer, shortStamp, priorityItems, toggleId, pruneChecks, splitItems, patientsInOrder, cmpWard, bldRank, labArrow, stripSpec, stripY, stampAgeH, pickBanner};
   Object.assign(G, api);
   G.LG = api;
 })(self);
