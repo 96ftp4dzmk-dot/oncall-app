@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v21';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v26';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -107,6 +107,25 @@ function showTab(t) {
   renderTabs();
   if (t === 'pri') renderPri(); else if (t === 'todo') renderTodo(); else renderAll();
 }
+/* 三個頁面左右滑動切換（循環）：右滑 優先 → 待辦 → 全部 → 優先；左滑反向 */
+const TAB_ORDER = ['pri', 'todo', 'all'];
+function stepTab(dir) { const i = TAB_ORDER.indexOf(st.tab); showTab(TAB_ORDER[(i + dir + TAB_ORDER.length) % TAB_ORDER.length]); window.scrollTo(0, 0); }
+(function bindTabSwipe() {
+  const el = document.getElementById('list');
+  if (!el) return;
+  let s = null;
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || e.target.closest('input,textarea,.seg,.pgb')) { s = null; return; }
+    s = {x: e.touches[0].clientX, y: e.touches[0].clientY};
+  }, {passive: true});
+  el.addEventListener('touchend', e => {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!s || !t) { s = null; return; }
+    const dx = t.clientX - s.x, dy = t.clientY - s.y; s = null;
+    if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy) * 2 && P) stepTab(dx > 0 ? 1 : -1);   // 右滑 = 優先→待辦→全部→優先；左滑反向
+  }, {passive: true});
+  el.addEventListener('touchcancel', () => { s = null; }, {passive: true});
+})();
 
 /* one row per patient: all of that patient's priority items as chips; done when every item is ticked */
 function patientGroups() {
@@ -115,6 +134,7 @@ function patientGroups() {
   return Array.from(by.entries()).map(([pi, its]) => ({pi: pi, its: its, g: Math.min(...its.map(it => it.g)),
                                                        done: its.every(it => CHECKS.includes(it.id))}));
 }
+let PRI_COLL = new Set();      // collapsed 優先 groups (group number, or 'done')
 function renderPri() {
   const el = $('#pri');
   if (!ITEMS.length) { el.innerHTML = '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
@@ -122,10 +142,13 @@ function renderPri() {
   /* row: [✓] | bed / name / chart + attending | chips: 生命徵象 (g1) first, then the other colour blocks in fixed order, every row the same */
   const row = x => { const p = P[x.pi] || {}, its = x.its.slice().sort((a, b) => a.g - b.g);
     return `<div class="ck${x.done ? ' done' : ''}" role="checkbox" aria-checked="${x.done}" tabindex="0" data-pi="${Number(x.pi)}"><span class="cbx"></span><span class="idc"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="pmeta">${esc(p.chart || '')}</span><span class="pmeta">${esc(p.vs || '')}</span></span><span class="pchips">${its.map(chipHtml).join('')}</span><button class="go" type="button" data-go="${Number(x.pi)}" aria-label="開啟病人頁">›</button></div>`; };
-  let h = `<div class="pg"><span>${done.length} / ${groups.length} 人</span><div class="pgb"><span style="width:${Math.round(done.length / groups.length * 100)}%"></span></div></div>`;
+  let h = `<div class="pg"><span>${done.length} / ${groups.length} 人</span><div class="pgb"><span style="width:${Math.round(done.length / groups.length * 100)}%"></span></div><button class="docb" data-doc="pri" type="button">輸出 Doc</button></div>`;
+  /* 各分組標題是 toggle list：點一下收合 / 展開（收合狀態只在記憶體，鎖定後重置） */
   GROUPS.forEach(g => { const rows = open.filter(x => x.g === g.g);
-    if (rows.length) h += `<div class="gh g${g.g}"><i></i>${g.name} · ${rows.length}</div>` + rows.map(row).join(''); });
-  if (done.length) h += `<div class="donehd">已處理 ${done.length}</div>` + done.map(row).join('');
+    if (rows.length) { const c = PRI_COLL.has(g.g);
+      h += `<div class="gh g${g.g} tg" role="button" tabindex="0" aria-expanded="${!c}" data-gtog="${g.g}"><i></i>${g.name} · ${rows.length}<span class="chev">${c ? '▸' : '▾'}</span></div>` + (c ? '' : rows.map(row).join('')); } });
+  if (done.length) { const c = PRI_COLL.has('done');
+    h += `<div class="donehd tg" role="button" tabindex="0" aria-expanded="${!c}" data-gtog="done">已處理 ${done.length}<span class="chev">${c ? '▸' : '▾'}</span></div>` + (c ? '' : done.map(row).join('')); }
   el.innerHTML = h;
 }
 /* tick / untick every priority item of one patient (one row = one patient) */
@@ -299,19 +322,24 @@ function renderDetail(i, from) {
   const nMicro = micro.reduce((n, e) => n + objs(e[1]).length, 0);
   /* culture results in one box per kind (細菌 / 病毒 / ...): left = status, right = the full HIS item name */
   const cbox = (title, n, inner) => inner ? `<div class="cbox"><div class="cbt">${esc(title)}<small>${n}</small></div>${inner}</div>` : '';
-  const cx = micro.filter(([, rows]) => objs(rows).length).map(([k, rows]) => cbox(k, objs(rows).length, `<div class="mg">${objs(rows).map(r => `<span class="st">${r.pos ? `<span class="chip g3">${esc(r.t)}</span>` : esc(r.t)}</span><span class="it">${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`).join('')}</div>`)).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
+  const cx = micro.filter(([, rows]) => objs(rows).length).map(([k, rows]) => cbox(k, objs(rows).length, `<div class="mg">${objs(rows).map(r => `<span class="st${String(r.t || '').length > 22 ? ' wide' : ''}">${r.pos ? `<span class="chip g3">${esc(r.t)}</span>` : esc(r.t)}</span><span class="it">${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`).join('')}</div>`)).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
   const today = Array.isArray(p.today) ? p.today : [];
   /* drugs: the flagged ones (meds) and the other active drugs (others) in one list, boxed by pharmacy category */
   const drugs = objs(p.meds).concat(objs(p.others)), PHARM = ['抗生素', '止痛藥', '抗凝血·抗血小板', '抗癌藥', '類固醇', '升壓劑', '腸胃藥', '其他'];
-  const drugLi = m => `<li>${esc(m.n)}${m.freq ? ` <span class="sub">q${esc(m.freq)}</span>` : ''}${m.d ? ` <span class="sub">D${esc(m.d)}</span>` : ''}</li>`;
-  const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (m.cat || '其他') === c); return L.length ? cbox(c, L.length, `<ul class="dl">${L.map(drugLi).join('')}</ul>`) : ''; }).join('');
+  /* one grid row per drug: 藥名 (left) | 劑量 | 途徑 | 頻次 | 天數 (right) so every row lines up. dose/route are already split off
+     by the server; the name still carries them at its end, so strip those trailing tokens for display */
+  const drugName = m => { const toks = String(m.n || '').split(' '); const tail = [m.route, m.dose].filter(Boolean);
+    while (tail.length && toks.length && toks[toks.length - 1] === tail[0]) { toks.pop(); tail.shift(); }
+    return toks.join(' ').trim() || String(m.n || ''); };
+  const drugLi = m => `<div class="dr"><span class="dn">${esc(drugName(m))}</span><span class="dq">${esc(m.dose || '')}</span><span class="dt">${esc(m.route || '')}</span><span class="dfq">${m.freq ? esc(m.freq) : ''}</span><span class="dd">${m.d ? 'D' + esc(m.d) : ''}</span></div>`;
+  const drugHd = '<div class="dr dh2"><span class="dn">藥名</span><span class="dq">劑量</span><span class="dt">途徑</span><span class="dfq">頻次</span><span class="dd">天數</span></div>';
+  const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (m.cat || '其他') === c); return L.length ? cbox(c, L.length, `<div class="dgrid">${drugHd}${L.map(drugLi).join('')}</div>`) : ''; }).join('');
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
      + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
      + fold('目前處方', drugs.length, drugBoxes, true)
      + fold('特殊交班事項', (NOTES[p.chart] || {}).sp ? '有內容' : '', `<textarea id="spx" class="spx" rows="4" placeholder="自行輸入（只存在這支手機，加密保存）">${esc((NOTES[p.chart] || {}).sp || '')}</textarea>`, !!(NOTES[p.chart] || {}).sp)
      + fold('交班與交代事項', '', p.memo ? `<div class="memo">${esc(p.memo)}</div>` : '', true)
      + fold('護理紀錄', p.nurs ? p.nurs.w : '', p.nurs ? `<div class="memo">${esc(p.nurs.t)}</div>` : '', false);
-  h += '<div class="pn2"><button id="prev" type="button">‹ 上一位</button><button id="next" type="button">下一位 ›</button></div>';
   $('#db').innerHTML = h;
   renderPend(i); renderStrips(p); bindStrips(p); bindSwipe(p.chart);
   /* 特殊交班事項: free text per patient, kept in NOTES[chart].sp (sealed with the notes, local only) */
@@ -350,9 +378,11 @@ document.addEventListener('click',e=>{
  const t=e.target;
  const tb=t.closest('[data-tab]');if(tb){showTab(tb.dataset.tab);window.scrollTo(0,0);return}
  const z=t.closest('[data-z]');if(z){st.zone=z.dataset.z;renderAll();return}
+ const dcb=t.closest('[data-doc]');if(dcb){exportDoc(dcb.dataset.doc);return}
+ const gt=t.closest('[data-gtog]');if(gt){const k=gt.dataset.gtog==='done'?'done':+gt.dataset.gtog;if(PRI_COLL.has(k))PRI_COLL.delete(k);else PRI_COLL.add(k);renderPri();return}
  const gb=t.closest('[data-go]');if(gb){renderDetail(+gb.dataset.go,'pri');return}
  const ck=t.closest('.ck');if(ck){if(ck.dataset.pi!==undefined)togglePatient(+ck.dataset.pi);else toggleCheck(ck.dataset.id);return}
- if(t.closest('#pdfall')){exportPdf(null);return}
+ const tsb=t.closest('[data-tsort]');if(tsb){TODO_SORT=tsb.dataset.tsort;renderTodo();return}
  const tdo=t.closest('.tdo');if(tdo){openNote(+tdo.dataset.note);return}
  const pr=t.closest('.pr');if(pr){renderDetail(+pr.dataset.i,'all');return}
  if(t.closest('#mn')){openMenu();return}
@@ -1098,7 +1128,7 @@ function setTodo(chart, on, pi) {
   const cur = NOTES[chart] || {}, changed = (cur.todo === true) !== on;
   if (!changed && on) return;
   UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null, pi: pi == null ? null : pi};
-  if (changed) putNote(chart, {todo: on});
+  if (changed) putNote(chart, on ? {todo: true, td: Date.now()} : {todo: false});
   renderTodo(); renderTabs();
   toastUndo(on ? '已加入待辦' : '已完成');
 }
@@ -1129,11 +1159,28 @@ const hmLocal = ms => { const d = new Date(Number(ms)); return pad(d.getHours())
 function renderTodo() {
   const el = $('#todo');
   if (!el || !P) return;
-  const idx = todoIdx();
+  const idx = todoSorted();
   if (!idx.length) { el.innerHTML = '<div class="empty">沒有待辦<small>在病人頁左滑即可加入待辦；右滑表示已完成</small></div>'; return; }
-  el.innerHTML = `<div class="tdh"><span>${idx.length} 位 · ${esc(ymdLocal(Date.now()))}</span><button id="pdfall" type="button">輸出 PDF</button></div>` + idx.map(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done && x.t);
-    return `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
-  }).join('');
+  const SORTS = [['bed', '床號'], ['vs', '主治'], ['date', '日期'], ['zone', '內外圍']];
+  let h = `<div class="tdh"><span>${idx.length} 位 · ${esc(ymdLocal(Date.now()))}</span><button class="docb" data-doc="todo" type="button">輸出 Doc</button></div>`
+        + `<div class="tds">${SORTS.map(s => `<button type="button" data-tsort="${s[0]}" class="${TODO_SORT === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</div>`;
+  let last = null;
+  idx.forEach(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done && x.t), g = todoGroup(p);
+    if (g !== null && g !== last) { h += `<div class="tdg">${esc(g)}</div>`; last = g; }
+    h += `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
+  });
+  el.innerHTML = h;
+}
+/* 待辦排序：床號（預設，P 原順序）/ 主治 / 日期（加入待辦的日子，新到舊）/ 內外圍；清單與輸出 Doc 共用 */
+let TODO_SORT = 'bed';
+const todoDay = p => { const t = (NOTES[p.chart] || {}).td; return t ? isoDay(t) : '更早'; };
+function todoGroup(p) { return TODO_SORT === 'vs' ? (p.vs || '–') : TODO_SORT === 'zone' ? (p.zone || '–') : TODO_SORT === 'date' ? todoDay(p) : null; }
+function todoSorted() {
+  const base = todoIdx(), idx = base.slice(), rank = i => base.indexOf(i);
+  if (TODO_SORT === 'vs') idx.sort((a, b) => String(P[a].vs || '~').localeCompare(String(P[b].vs || '~'), 'zh-Hant') || rank(a) - rank(b));
+  else if (TODO_SORT === 'zone') { const z = p => p.zone === '內圍' ? 0 : p.zone === '外圍' ? 1 : 2; idx.sort((a, b) => z(P[a]) - z(P[b]) || rank(a) - rank(b)); }
+  else if (TODO_SORT === 'date') idx.sort((a, b) => ((NOTES[P[b].chart] || {}).td || 0) - ((NOTES[P[a].chart] || {}).td || 0) || rank(a) - rank(b));
+  return idx;
 }
 
 /* notepad page: Apple-Notes style checklist (Enter = next check, done = strike-through and moves down) + record bar */
@@ -1195,7 +1242,6 @@ function noteEdit(fn) { const p = P && P[NOTE_I]; if (!p) return; putNote(p.char
 function toggleNoteItem(id) { commitNew(); noteEdit(L => L.map(x => x.id === id ? Object.assign({}, x, {done: !x.done}) : x)); drawNote(); }
 function delNoteItem(id) { noteEdit(L => L.filter(x => x.id !== id)); drawNote(); }
 $('#npb').onclick = closeNote;
-$('#npp').onclick = () => exportPdf(NOTE_I);
 $('#npd').addEventListener('input', e => {
   const t = e.target, p = P && P[NOTE_I];
   if (!p || !t.classList.contains('ni') || !t.dataset.id) return;
@@ -1236,17 +1282,44 @@ $('#npbar').addEventListener('click', e => {
   const ad = t.closest('[data-adel]'); if (ad) delRec(ad.dataset.adel);
 });
 
-/* 輸出 PDF: a print sheet (bed, name, attending, to-do items, date); on the phone use Share / Print -> Save as PDF */
-function exportPdf(only) {
-  const idx = only != null && only >= 0 ? [only] : todoIdx();
-  if (!idx.length) { toast('沒有待辦可輸出'); return; }
-  commitNew();
-  const sheet = $('#printdoc');
-  sheet.innerHTML = `<h1>待辦事項 · ${esc(ymdLocal(Date.now()))}</h1>` + idx.map(i => { const p = P[i], its = noteItems(p.chart).filter(x => x.t);
-    return `<section><div class="ph"><b>${esc(p.bed)}</b> ${esc(p.name)}<span>主治：${esc(p.vs || '–')}</span></div>${its.length ? `<ul>${its.map(x => `<li class="${x.done ? 'd' : ''}"><i>${x.done ? '☑' : '☐'}</i><span>${esc(x.t)}</span><small>${esc(ymdLocal(x.ts || Date.now()))}</small></li>`).join('')}</ul>` : '<p>（無待辦文字）</p>'}</section>`;
-  }).join('');
-  window.onafterprint = () => { sheet.innerHTML = ''; };
-  setTimeout(() => { try { window.print(); } catch (e) { toast('此瀏覽器無法列印'); } }, 60);
+/* 輸出 Doc (待辦tab): only the completed items of the 待辦 patients, sent to the relay (access key required). The relay
+ * writes one Google Doc per day into the Drive folder 待辦完成清單 with bed, masked name, chart no. and those items. */
+const isoDay = ms => { const d = new Date(Number(ms)); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+/* kinds: todo = 已完成待辦（依目前的排序分組）; pri = 優先清單核取表（☑ 已勾選 / ☐ 未勾選，依分組）;
+ * all = 全部病人 A4 手寫清單（內圍→外圍；身分 / 病歷號 / 床號 / 主治 / DNR / EOL / Critical）。 */
+const docRow = p => ({bed: String(p.bed || ''), name: String(p.name || ''), chart: String(p.chart || ''), vs: String(p.vs || '')});
+function docGroups(kind) {
+  const out = [];
+  if (kind === 'todo') {
+    let cur = null;
+    todoSorted().forEach(i => { const p = P[i], done = noteItems(p.chart).filter(x => x.done && x.t).map(x => String(x.t));
+      if (!done.length) return;
+      const g = todoGroup(p) || '';
+      if (!cur || cur.h !== g) { cur = {h: g, rows: []}; out.push(cur); }
+      cur.rows.push(Object.assign(docRow(p), {done: done})); });
+  } else if (kind === 'pri') {
+    const gs = patientGroups();
+    GROUPS.forEach(g => { const rows = gs.filter(x => x.g === g.g).sort((a, b) => a.pi - b.pi).map(x => Object.assign(docRow(P[x.pi] || {}), {chk: !!x.done}));
+      if (rows.length) out.push({h: String(g.name), rows: rows}); });
+  } else {
+    const zs = ['內圍', '外圍'].concat(Array.from(new Set(P.map(p => p.zone))).filter(z => z !== '內圍' && z !== '外圍'));
+    zs.forEach(z => { const rows = P.filter(p => p.zone === z).map(p => Object.assign(docRow(p), {flags: [p.dnr ? 'DNR' : '', p.end ? 'EOL' : '', p.crit ? 'Critical' : ''].filter(Boolean)}));
+      if (rows.length) out.push({h: String(z || '–'), rows: rows}); });
+  }
+  return out;
+}
+async function exportDoc(kind) {
+  kind = kind === 'pri' || kind === 'all' ? kind : 'todo';
+  const groups = docGroups(kind);
+  if (!groups.length) { toast(kind === 'todo' ? '沒有已完成的待辦可輸出' : '沒有可輸出的病人'); return; }
+  if (!REG || !REG.access) { toast('尚未連線，無法建立 Doc'); return; }
+  toast('建立 Google Doc 中…');
+  const win = window.open('', '_blank');     // opened inside the click (iPhone blocks popups opened after the await)
+  try {
+    const j = await postJSON({a: 'doc', k: REG.access, kind: kind, date: isoDay(Date.now()), groups: groups});
+    if (j && j.ok && j.url) { toast('已建立 Google Doc'); if (win) win.location = j.url; else location.href = j.url; }
+    else { if (win) win.close(); toast(j && j.err === 'rate' ? '請稍候幾秒再試' : '建立失敗（中繼未設定或權限不足）'); }
+  } catch (e) { if (win) win.close(); toast('連線失敗，稍後再試'); }
 }
 
 /* recording: MediaRecorder; the blob is sealed before it is stored, and dropped when the session was locked meanwhile */

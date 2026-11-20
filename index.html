@@ -310,6 +310,36 @@ details.tg .in{padding:0 0 12px 8px}
  #printdoc li i{font-style:normal}#printdoc li span{flex:1}#printdoc li small{color:#555}
  #printdoc li.d span{text-decoration:line-through;color:#555}
 }
+/* ---- v22: drug boxes as aligned grid rows (藥名 left, 劑量 / 途徑 / 頻次 / 天數 in fixed columns) ---- */
+.dgrid{font-variant-numeric:tabular-nums}
+.dgrid .dr{display:grid;grid-template-columns:minmax(0,1fr) 62px 40px 42px 36px;column-gap:6px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--line2);font-size:13.5px}
+.dgrid .dr:last-child{border-bottom:0}
+.dgrid .dn{text-align:left;overflow-wrap:anywhere;color:var(--ink)}
+.dgrid .dq,.dgrid .dfq,.dgrid .dd{text-align:right;color:var(--sub);white-space:nowrap}
+.dgrid .dt{text-align:center;color:var(--sub);white-space:nowrap}
+.dgrid .dh2{font-size:11.5px;color:var(--sub);padding:0 0 3px}
+.dgrid .dh2 .dn{color:var(--sub)}
+/* ---- v26: 輸出 Doc buttons on all 3 tabs, toggle-list group headers, prev/next in the patient top bar ---- */
+.docb{min-height:36px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--ink);font:500 13px var(--sans);white-space:nowrap}
+.pg .docb{margin-left:auto;flex:none}
+.tg{cursor:pointer;-webkit-user-select:none;user-select:none}
+.tg .chev{margin-left:auto;font-size:13px;color:var(--sub)}
+.donehd.tg{display:flex;align-items:center}
+.nav .nvr{display:flex;align-items:center;gap:0}
+.nav .nvr button{padding:8px 8px;font-size:15px;white-space:nowrap}
+.nav .nvr button:disabled{opacity:.35}
+.nav .nvr .pos{padding-right:4px}
+/* ---- v25: 待辦 sort bar + group headers ---- */
+.tds{display:flex;gap:6px;padding:0 20px 8px}
+.tds button{flex:1;min-height:34px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--sub);font:500 13px var(--sans)}
+.tds button.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:700}
+.tdg{margin:6px 20px 6px;font:600 12.5px var(--sans);color:var(--sub)}
+/* ---- v23: culture rows — right (item) column wider; long results take a full-width row and wrap (no overflow / huge gaps) ---- */
+.cbox .mg{grid-template-columns:fit-content(30%) minmax(0,1fr);align-items:start;gap:4px 12px}
+.cbox .mg .st{min-width:0}
+.cbox .mg .st .chip{white-space:normal;overflow-wrap:anywhere;max-width:100%;display:inline-block;line-height:1.35}
+.cbox .mg .st.wide{grid-column:1 / -1}
+.cbox .mg .it{min-height:0}
 </style></head><body>
 <div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
@@ -351,6 +381,7 @@ details.tg .in{padding:0 0 12px 8px}
   <div id="banner" class="bnr"></div>
   <div id="pri"></div>
   <div id="all" style="display:none">
+    <div class="tdh"><span>內圍＋外圍 全部病人</span><button class="docb" data-doc="all" type="button">輸出 Doc</button></div>
     <div class="seg" id="zone"></div>
     <input type="search" id="q" placeholder="搜尋 床號 / 病歷號 / 姓名" autocomplete="off">
     <div id="cards"></div>
@@ -359,10 +390,10 @@ details.tg .in{padding:0 0 12px 8px}
   <div class="tb"><button type="button" data-tab="pri">優先</button><button type="button" data-tab="all">全部</button><button type="button" data-tab="todo">待辦</button></div>
 </div>
 <div id="detail">
-  <div class="nav"><button id="back" type="button">‹ 優先</button><div class="pos" id="dt"></div></div>
+  <div class="nav"><button id="back" type="button">‹ 優先</button><div class="nvr"><span class="pos" id="dt"></span><button id="prev" type="button">‹ 上一位</button><button id="next" type="button">下一位 ›</button></div></div>
   <div class="body" id="db"></div>
 </div>
-<div id="np"><div class="nav"><button id="npb" type="button">‹ 待辦</button><div class="pos" id="npt"></div><button id="npp" type="button">輸出 PDF</button></div>
+<div id="np"><div class="nav"><button id="npb" type="button">‹ 待辦</button><div class="pos" id="npt"></div></div>
   <div class="body" id="npd"></div><div id="npbar"></div></div>
 <div id="foot" style="display:none"><button id="clr" type="button" class="lo">清除本機資料</button></div>
 <div id="menu" class="ov"><div class="sheet"><button type="button" data-act="help">優先門檻</button><button type="button" data-act="lock">鎖定</button><button type="button" class="danger" data-act="clear">清除本機資料</button><div class="ver" id="ver"></div></div></div>
