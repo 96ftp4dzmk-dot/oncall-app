@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v40';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v41';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -68,7 +68,6 @@ function hist(u) { try { history.replaceState(null, '', u || location.pathname +
 /* ================= rendering ================= */
 const newSt = () => ({tab: 'pri', zone: '內圍', q: '', idx: [], cur: -1, from: 'pri', order: []});
 let st = newSt();
-const DEPT_H = {MO: 'MO 腫瘤內科', HEMA: 'HEMA 血液腫瘤'};
 /* English outlined labels only (no Chinese on a patient): CRIT NEW DNR EOL; NF is expressed by the ANC chip */
 function tags(p) {
   let h = '';
@@ -195,10 +194,9 @@ function renderAll() {
   if (!st.idx.length) { $('#cards').innerHTML = '<div class="empty">沒有符合的病人</div>'; return; }
   const by = {};
   ITEMS.forEach(it => { (by[it.pi] = by[it.pi] || []).push(it); });
-  let h = '', last = '';
+  let h = '';   // MO and HEMA are rounded together: one list in ward / bed order, no 科別 headers
   st.idx.forEach(i => {
     const p = P[i];
-    if (p.dept !== last) { h += `<div class="sec">${esc(DEPT_H[p.dept] || p.dept)}</div>`; last = p.dept; }
     const all = by[i] || [], have = new Set(all.map(x => x.key));
     const chips = all.filter(x => x.key !== 'CRIT' && x.key !== 'NEW').map(chipHtml).join('');
     const mild = (Array.isArray(p.labs) ? p.labs : []).filter(l => l && l.abn && !have.has(l.l)).map(l => `${esc(l.l)} ${esc(labText(l))}${labArrow(l.l, l.v)}`);
