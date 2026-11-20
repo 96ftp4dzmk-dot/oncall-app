@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v26';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v28';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -162,9 +162,9 @@ function togglePatient(pi) {
 }
 
 function renderAll() {
-  const q = st.q.trim().toLowerCase();
+  const q = st.q.replace(/\s+/g, '').toLowerCase();   // spaces (incl. full-width) are ignored on both sides
   $('#zone').innerHTML = ['內圍', '外圍'].map(z => `<button class="${st.zone === z ? 'on' : ''}" data-z="${z}">${z} ${P.filter(p => p.zone === z).length}</button>`).join('');
-  st.idx = P.map((p, i) => i).filter(i => { const p = P[i]; return p.zone === st.zone && (!q || (p.bed + p.chart + p.name + p.dept).toLowerCase().includes(q)); });
+  st.idx = P.map((p, i) => i).filter(i => { const p = P[i]; return p.zone === st.zone && (!q || (p.bed + p.chart + p.name + p.dept).replace(/\s+/g, '').toLowerCase().includes(q)); });
   if (!st.idx.length) { $('#cards').innerHTML = '<div class="empty">沒有符合的病人</div>'; return; }
   const by = {};
   ITEMS.forEach(it => { (by[it.pi] = by[it.pi] || []).push(it); });
@@ -310,7 +310,7 @@ function renderDetail(i, from) {
   const props = [['病歷號', esc(p.chart)], ['科別', `${esc(p.dept)} · ${esc(p.zone)}`], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['體重', wt], ['IO 入/出', io], ['UO 尿量（今日）', uo], ['標記', tags(p)]].filter(r => r[1]);
   let h = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2></div>
   <dl class="props">${props.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>
-  <div class="swh">左滑：加入待辦 ・ 右滑：已完成（可復原）</div>
+  <div class="swh">左滑加入待辦，右滑標為已完成（可復原）</div>
   <div class="blk" id="pend"></div>
   <div class="blk"><h3>生命徵象 · 72 小時</h3><div id="vsbox"></div><div class="rd" id="read"></div></div>`;
   const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };

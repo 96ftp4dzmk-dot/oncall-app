@@ -9,7 +9,6 @@
 <meta name="apple-mobile-web-app-title" content="值班">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F5F4EE" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -19,9 +18,8 @@
 /* 暖紙 (warm paper): tokens from docs/ui-redesign/spec.md section 4. System fonts only (CSP). Vertical scrolling only. */
 :root{--bg:#F5F4EE;--surf:#FFFFFF;--ink:#1F1E1D;--sub:#77736A;--line:#E2DED3;--line2:#ECE9E0;--seg:#EAE7DD;--acc:#C96442;--boxc:#B9B3A6;--band:#E9E4D6;--okc:#5B8C5A;
  --cv-bg:#F8DCD6;--cv-fg:#A3271A;--cv-solid:#C53A2A;--cn-bg:#E6DDF2;--cn-fg:#5B3A92;--co-bg:#F3E3D3;--co-fg:#8F4A1F;--newc:#2F6DB5;--eolc:#7A5C3E;--hover:#ECE9E0;
- --sans:-apple-system,BlinkMacSystemFont,"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",sans-serif;--serif:-apple-system,BlinkMacSystemFont,"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",sans-serif}
-@media (prefers-color-scheme:dark){:root{--bg:#262624;--surf:#30302E;--ink:#ECEAE3;--sub:#A09C92;--line:#3B3B38;--line2:#33332F;--seg:#33332F;--acc:#D97757;--boxc:#6B6862;--band:#34332F;--okc:#7DB27B;
- --cv-bg:#5A2620;--cv-fg:#FFB4A8;--cv-solid:#E5533F;--cn-bg:#3E2F57;--cn-fg:#D4C1F5;--co-bg:#4A3424;--co-fg:#F2C29C;--newc:#8DB8F0;--eolc:#C8A57F;--hover:#30302E}}
+ --sans:-apple-system,BlinkMacSystemFont,"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",sans-serif;--serif:"Songti TC","Noto Serif TC","PMingLiU","新細明體","MingLiU",-apple-system,BlinkMacSystemFont,"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",serif}
+:root{color-scheme:light}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--sans);overflow-x:hidden}
 button{font-family:inherit}
@@ -78,7 +76,7 @@ button{font-family:inherit}
 .pg{display:flex;align-items:center;gap:10px;padding:10px 20px 2px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
 .pgb{flex:1;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
 .pgb span{display:block;height:100%;background:var(--acc)}
-.gh{display:flex;align-items:center;gap:8px;padding:16px 20px 4px;font:600 12px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--sub)}
+.gh{display:flex;align-items:center;gap:8px;padding:16px 20px 4px;font:600 12px var(--sans);letter-spacing:.02em;color:var(--sub)}
 .gh i{width:10px;height:10px;border-radius:3px;background:var(--co-fg)}
 .gh.g1 i{background:var(--cv-solid)}.gh.g2 i{background:var(--cn-fg)}
 .ck{display:flex;align-items:center;gap:12px;min-height:54px;padding:0 6px 0 20px;border-bottom:1px solid var(--line2);cursor:pointer;user-select:none;-webkit-user-select:none}
