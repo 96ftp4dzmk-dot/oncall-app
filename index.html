@@ -277,11 +277,9 @@ details.tg .in{padding:0 0 12px 8px}
 .ck .pchips{grid-column:3;grid-row:1;display:flex;flex-wrap:wrap;align-content:center;gap:4px;min-width:0}
 .ck .go{grid-column:4;grid-row:1}
 .ck .pchips .chip{font-size:12px;padding:1px 6px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.5}
-#np.slide{animation:npin .26s ease-out}@keyframes npin{from{transform:translateX(100%)}to{transform:none}}
 #npp{margin-left:auto;min-height:40px;padding:0 14px!important;border:1px solid var(--line)!important;border-radius:999px;background:var(--surf)!important;color:var(--ink)!important;font:500 13px var(--sans)!important}
-#np .body{padding-bottom:24px;min-height:calc(100vh - 140px)}
-#np .cl li{margin:0;padding:0 4px;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:none;box-shadow:none;min-height:46px}
-#np .cl .cbx{border-radius:50%}
+#npd .cl li{margin:0;padding:0 4px;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:none;box-shadow:none;min-height:46px}
+#npd .cl .cbx{border-radius:50%}
 .ni{flex:1;min-width:0;height:44px;padding:0;border:0;background:none;color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
 .cl li.done .ni{color:var(--sub);text-decoration:line-through}
 .cl li.new .cbx{opacity:.3}
@@ -338,6 +336,25 @@ details.tg .in{padding:0 0 12px 8px}
 .cbox .mg .st .chip{white-space:normal;overflow-wrap:anywhere;max-width:100%;display:inline-block;line-height:1.35}
 .cbox .mg .st.wide{grid-column:1 / -1}
 .cbox .mg .it{min-height:0}
+/* ---- v31: iOS-style swipe-to-delete row for 待辦 (red 刪除 layer under a row that drags over it) ---- */
+.tdw{position:relative;overflow:hidden;margin:0 14px 10px;border-radius:var(--r)}
+.tdw .tdo{position:relative;z-index:1;margin:0;will-change:transform;touch-action:pan-y}
+/* ---- v33: long-press up/down navigation hint on the patient page; no text selection while long-pressing ---- */
+#detail{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.navh{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom));z-index:45;transform:translateX(-50%);padding:8px 16px;border-radius:999px;background:var(--ink);color:var(--bg);font:600 14px var(--sans);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s}
+.navh.on{opacity:.92}
+.tdl{position:absolute;top:0;right:0;bottom:0;width:88px;display:flex;align-items:center;justify-content:center;background:var(--cv-solid);color:#fff;font:600 15px var(--sans);cursor:pointer}
+/* ---- v35: 今日 summary at the top of 優先 (還要做 / 今天完成 with times) ---- */
+.today{margin:0 14px 12px;padding:12px 14px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf)}
+.tdy-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font:600 15px var(--sans);margin-bottom:4px}
+.tdy-h small{font-weight:400;color:var(--sub);font-size:12.5px}
+.tdy-r{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line2);font-size:14px;cursor:pointer}
+.tdy-r b{font-weight:600;white-space:nowrap}
+.tdy-r span{flex:1;min-width:0;overflow-wrap:anywhere}
+.tdy-r small{color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+.tdy-r.done span{color:var(--sub)}
+.tdy-sub{margin-top:10px;font-size:12.5px;color:var(--sub)}
+.tdy-e{padding:6px 0;font-size:13.5px;color:var(--sub)}
 </style></head><body>
 <div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
@@ -384,20 +401,19 @@ details.tg .in{padding:0 0 12px 8px}
     <input type="search" id="q" placeholder="搜尋 床號 / 病歷號 / 姓名" autocomplete="off">
     <div id="cards"></div>
   </div>
-  <div id="todo" style="display:none"></div>
-  <div class="tb"><button type="button" data-tab="pri">優先</button><button type="button" data-tab="all">全部</button><button type="button" data-tab="todo">待辦</button></div>
+  <div class="tb"><button type="button" data-tab="pri">優先</button><button type="button" data-tab="all">全部</button></div>
 </div>
 <div id="detail">
   <div class="nav"><button id="back" type="button">‹ 優先</button><div class="nvr"><span class="pos" id="dt"></span><button id="prev" type="button">‹ 上一位</button><button id="next" type="button">下一位 ›</button></div></div>
   <div class="body" id="db"></div>
 </div>
-<div id="np"><div class="nav"><button id="npb" type="button">‹ 待辦</button><div class="pos" id="npt"></div></div>
-  <div class="body" id="npd"></div><div id="npbar"></div></div>
+<div id="np"><div class="body" id="npd"></div><div id="npbar"></div></div>
 <div id="foot" style="display:none"><button id="clr" type="button" class="lo">清除本機資料</button></div>
 <div id="menu" class="ov"><div class="sheet"><button type="button" data-act="help">優先門檻</button><button type="button" data-act="lock">鎖定</button><button type="button" class="danger" data-act="clear">清除本機資料</button><div class="ver" id="ver"></div></div></div>
 <div id="dlg" class="ov"><div class="dbox"><p id="dtx"></p><div class="row2"><button type="button" id="dno">取消</button><button type="button" id="dok" class="ok">確定</button></div></div></div>
 <div id="toast"></div>
 <div id="swbg"></div>
+<div id="navh" class="navh"></div>
 <div id="swl" class="swl"></div>
 <div id="printdoc"></div>
 <script src="config.js"></script>

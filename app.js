@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v30';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v36';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -90,12 +90,10 @@ function recalc() {
 
 const TAB_TITLE = {pri: '優先', all: '全部', todo: '待辦'};
 /* 待辦 tab: the indexes of the patients whose note is marked 待辦 (left swipe), in P order */
-const todoIdx = () => (P || []).map((p, i) => i).filter(i => (NOTES[P[i].chart] || {}).todo === true);
 function renderTabs() {
-  const open = patientGroups().filter(x => !x.done).length, td = todoIdx().length;
+  const open = patientGroups().filter(x => !x.done).length;
   $('.tb [data-tab=pri]').innerHTML = '優先' + (open ? `<span class="ct">${open}</span>` : '');
   $('.tb [data-tab=all]').textContent = `全部 ${P.length}`;
-  $('.tb [data-tab=todo]').innerHTML = '待辦' + (td ? `<span class="ct">${td}</span>` : '');
   document.querySelectorAll('.tb button').forEach(b => b.classList.toggle('on', b.dataset.tab === st.tab));
   $('#ttl').textContent = TAB_TITLE[st.tab] || '優先';
 }
@@ -103,12 +101,11 @@ function showTab(t) {
   st.tab = t;
   $('#pri').style.display = t === 'pri' ? '' : 'none';
   $('#all').style.display = t === 'all' ? '' : 'none';
-  $('#todo').style.display = t === 'todo' ? '' : 'none';
   renderTabs();
-  if (t === 'pri') renderPri(); else if (t === 'todo') renderTodo(); else renderAll();
+  if (t === 'pri') renderPri(); else renderAll();
 }
 /* 三個頁面左右滑動切換（循環）：右滑 優先 → 待辦 → 全部 → 優先；左滑反向 */
-const TAB_ORDER = ['pri', 'todo', 'all'];
+const TAB_ORDER = ['pri', 'all'];
 function stepTab(dir) { const i = TAB_ORDER.indexOf(st.tab); showTab(TAB_ORDER[(i + dir + TAB_ORDER.length) % TAB_ORDER.length]); window.scrollTo(0, 0); }
 (function bindTabSwipe() {
   const el = document.getElementById('list');
@@ -135,14 +132,41 @@ function patientGroups() {
                                                        done: its.every(it => CHECKS.includes(it.id))}));
 }
 let PRI_COLL = new Set();      // collapsed 優先 groups (group number, or 'done')
+/* when each priority tick was made: NOTES._ct = {item id: ms}, sealed with the notes (feeds the 今日 summary) */
+function markTicks(before) {
+  const ct = Object.assign({}, NOTES._ct || {}), now = Date.now();
+  CHECKS.forEach(id => { if (!before.includes(id)) ct[id] = now; });
+  before.forEach(id => { if (!CHECKS.includes(id)) delete ct[id]; });
+  NOTES._ct = ct; saveNotes();
+}
+/* 今日摘要（優先頁頂部）：待做 = 未完成的待處理文字；今天完成 = 今天勾掉的優先項目與待處理文字（附時間） */
+function todayHtml() {
+  if (!P) return '';
+  const t0 = new Date().setHours(0, 0, 0, 0), ct = NOTES._ct || {};
+  const hm = ms => { const d = new Date(Number(ms)); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  const open = [], done = [];
+  P.forEach((p, pi) => noteItems(p.chart).forEach(x => {
+    if (!x.t) return;
+    if (!x.done) open.push({pi: pi, text: x.t});
+    else if (Number(x.dt) >= t0) done.push({pi: pi, text: x.t, t: Number(x.dt)});
+  }));
+  ITEMS.forEach(it => { if (CHECKS.includes(it.id) && Number(ct[it.id]) >= t0) done.push({pi: it.pi, text: it.txt, t: Number(ct[it.id])}); });
+  const priOpen = ITEMS.filter(it => !CHECKS.includes(it.id)).length;
+  done.sort((a, b) => b.t - a.t);
+  const who = pi => `<b>${esc(P[pi].bed)} ${esc(P[pi].name)}</b>`;
+  let h = `<div class="today"><div class="tdy-h"><span>今日</span><small>待做 ${open.length} · 優先未勾 ${priOpen} · 今天完成 ${done.length}</small></div>`;
+  h += open.length ? open.slice(0, 40).map(r => `<div class="tdy-r" data-go="${r.pi}">${who(r.pi)}<span>${esc(r.text)}</span></div>`).join('') : '<div class="tdy-e">沒有未完成的待處理文字</div>';
+  if (done.length) h += '<div class="tdy-sub">今天完成</div>' + done.slice(0, 40).map(r => `<div class="tdy-r done" data-go="${r.pi}"><small>${hm(r.t)}</small>${who(r.pi)}<span>${esc(r.text)}</span></div>`).join('');
+  return h + '</div>';
+}
 function renderPri() {
   const el = $('#pri');
-  if (!ITEMS.length) { el.innerHTML = '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
+  if (!ITEMS.length) { el.innerHTML = todayHtml() + '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
   const groups = patientGroups(), open = groups.filter(x => !x.done), done = groups.filter(x => x.done);
   /* row: [✓] | bed / name / chart + attending | chips: 生命徵象 (g1) first, then the other colour blocks in fixed order, every row the same */
   const row = x => { const p = P[x.pi] || {}, its = x.its.slice().sort((a, b) => a.g - b.g);
     return `<div class="ck${x.done ? ' done' : ''}" role="checkbox" aria-checked="${x.done}" tabindex="0" data-pi="${Number(x.pi)}"><span class="cbx"></span><span class="idc"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="pmeta">${esc(p.chart || '')}</span><span class="pmeta">${esc(p.vs || '')}</span></span><span class="pchips">${its.map(chipHtml).join('')}</span><button class="go" type="button" data-go="${Number(x.pi)}" aria-label="開啟病人頁">›</button></div>`; };
-  let h = `<div class="pg"><span>${done.length} / ${groups.length} 人</span><div class="pgb"><span style="width:${Math.round(done.length / groups.length * 100)}%"></span></div><button class="docb" data-doc="pri" type="button">輸出 Doc</button></div>`;
+  let h = todayHtml() + `<div class="pg"><span>${done.length} / ${groups.length} 人</span><div class="pgb"><span style="width:${Math.round(done.length / groups.length * 100)}%"></span></div><button class="docb" data-doc="pri" type="button">輸出 Doc</button></div>`;
   /* 各分組標題是 toggle list：點一下收合 / 展開（收合狀態只在記憶體，鎖定後重置） */
   GROUPS.forEach(g => { const rows = open.filter(x => x.g === g.g);
     if (rows.length) { const c = PRI_COLL.has(g.g);
@@ -155,7 +179,9 @@ function renderPri() {
 function togglePatient(pi) {
   const ids = ITEMS.filter(it => it.pi === pi).map(it => it.id);
   const all = ids.length > 0 && ids.every(id => CHECKS.includes(id));
+  const before = CHECKS.slice();
   CHECKS = all ? CHECKS.filter(id => !ids.includes(id)) : CHECKS.concat(ids.filter(id => !CHECKS.includes(id)));
+  markTicks(before);
   renderPri(); renderTabs();
   if ($('#detail').style.display === 'block' && st.cur >= 0) renderPend(st.order[st.cur]);
   return saveChecks();
@@ -209,7 +235,9 @@ async function saveChecks() {
   try { await saveBlob(box, 'checks'); } catch (e) { /* ticks stay in memory only */ }
 }
 function toggleCheck(id) {
+  const before = CHECKS.slice();
   CHECKS = toggleId(CHECKS, id);
+  markTicks(before);
   renderPri(); renderTabs();
   if ($('#detail').style.display === 'block' && st.cur >= 0) renderPend(st.order[st.cur]);   // the patient page shows the same ticks
   return saveChecks();
@@ -289,14 +317,20 @@ function fold(title, small, inner, open) {
   return inner ? `<details class="tg"${open ? ' open' : ''}><summary>${title}<small>${small == null ? '' : esc(small)}</small></summary><div class="in">${inner}</div></details>` : '';
 }
 /* 「待處理」 block of the patient page: this patient's priority items, ticked in sync with the priority tab */
+function refreshPend() { if ($('#detail').style.display === 'block' && st.order[st.cur] != null) renderPend(st.order[st.cur]); }
 function renderPend(i) {
   const el = $('#pend'); if (!el) return;
   const its = ITEMS.filter(it => it.pi === i);
-  el.style.display = its.length ? '' : 'none';
-  el.innerHTML = its.length ? '<h3>待處理</h3>' + its.map(it => `<div class="ck pk${CHECKS.includes(it.id) ? ' done' : ''}" role="checkbox" aria-checked="${CHECKS.includes(it.id)}" tabindex="0" data-id="${esc(it.id)}"><span class="cbx"></span>${chipHtml(it)}</div>`).join('') : '';
+  el.style.display = '';
+  NOTE_I = i;
+  $('#np').append($('#npd'), $('#npbar'));   // checklist / recording elements
+  el.innerHTML = '<h3>待處理</h3>' + its.map(it => `<div class="ck pk${CHECKS.includes(it.id) ? ' done' : ''}" role="checkbox" aria-checked="${CHECKS.includes(it.id)}" tabindex="0" data-id="${esc(it.id)}"><span class="cbx"></span>${chipHtml(it)}</div>`).join('') + '<div id="npslot"></div>';
+  $('#npslot').append($('#npd'), $('#npbar'));
+  drawNote();
 }
 
 function renderDetail(i, from) {
+  closeNote();   // leave the previous patient's checklist (commit + stop recording)
   const p = P[i];
   if (from) { st.from = from; st.order = from === 'pri' ? patientsInOrder(ITEMS) : st.idx.slice(); }
   st.cur = st.order.indexOf(i); hist('#p' + i); stripSel = null;
@@ -311,7 +345,7 @@ function renderDetail(i, from) {
   const props = [['病歷號', esc(p.chart)], ['科別', `${esc(p.dept)} · ${esc(p.zone)}`], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['體重', wt], ['IO 入/出', io], ['UO 尿量（今日）', uo], ['標記', tags(p)]].filter(r => r[1]);
   let h = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2></div>
   <dl class="props">${props.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>
-  <div class="swh">左滑加入待辦，右滑標為已完成（可復原）</div>
+  <div class="swh">左滑加入待處理，右滑標為已完成（可復原）</div>
   <div class="blk" id="pend"></div>
   <div class="blk"><h3>生命徵象 · 72 小時</h3><div id="vsbox"></div><div class="rd" id="read"></div></div>`;
   const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };
@@ -334,13 +368,14 @@ function renderDetail(i, from) {
     return toks.join(' ').trim() || String(m.n || ''); };
   const drugLi = m => `<div class="dr"><span class="dn">${esc(drugName(m))}</span><span class="dq">${esc(m.dose || '')}</span><span class="dt">${esc(m.route || '')}</span><span class="dfq">${m.freq ? esc(m.freq) : ''}</span><span class="dd">${m.d ? 'D' + esc(m.d) : ''}</span></div>`;
   const drugHd = '<div class="dr dh2"><span class="dn">藥名</span><span class="dq">劑量</span><span class="dt">途徑</span><span class="dfq">頻次</span><span class="dd">天數</span></div>';
-  const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (m.cat || '其他') === c); return L.length ? cbox(c, L.length, `<div class="dgrid">${drugHd}${L.map(drugLi).join('')}</div>`) : ''; }).join('');
+  const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (PHARM.includes(m.cat) ? m.cat : '其他') === c);   // unknown category -> 其他, never dropped return L.length ? cbox(c, L.length, `<div class="dgrid">${drugHd}${L.map(drugLi).join('')}</div>`) : ''; }).join('');
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
      + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
      + fold('目前處方', drugs.length, drugBoxes, true)
      + fold('特殊交班事項', (NOTES[p.chart] || {}).sp ? '有內容' : '', `<textarea id="spx" class="spx" rows="4" placeholder="自行輸入（只存在這支手機，加密保存）">${esc((NOTES[p.chart] || {}).sp || '')}</textarea>`, !!(NOTES[p.chart] || {}).sp)
      + fold('交班與交代事項', '', p.memo ? `<div class="memo">${esc(p.memo)}</div>` : '', true)
      + fold('護理紀錄', p.nurs ? p.nurs.w : '', p.nurs ? `<div class="memo">${esc(p.nurs.t)}</div>` : '', false);
+  $('#np').append($('#npd'), $('#npbar'));   // keep the checklist / recording alive while #db is rewritten
   $('#db').innerHTML = h;
   renderPend(i); renderStrips(p); bindStrips(p); bindSwipe(p.chart);
   /* 特殊交班事項: free text per patient, kept in NOTES[chart].sp (sealed with the notes, local only) */
@@ -357,7 +392,7 @@ function renderDetail(i, from) {
 }
 function go(d){const n=st.cur+d;if(n<0||n>=st.order.length)return;renderDetail(st.order[n])}
 /* back to the tab the patient was opened from, at the row that was opened; a newer payload that arrived meanwhile is applied now */
-function closeDetail(){$('#detail').style.display='none';document.body.style.overflow='';hist('');
+function closeDetail(){closeNote();$('#detail').style.display='none';document.body.style.overflow='';hist('');
  const from=st.from;let pi=st.order[st.cur];
  if(PENDING){const chart=(P[pi]||{}).chart,d=PENDING;PENDING=null;applyData(d);pi=P.findIndex(x=>x.chart===chart)}   // new data: find the patient again by chart number
  showTab(from);
@@ -383,8 +418,6 @@ document.addEventListener('click',e=>{
  const gt=t.closest('[data-gtog]');if(gt){const k=gt.dataset.gtog==='done'?'done':+gt.dataset.gtog;if(PRI_COLL.has(k))PRI_COLL.delete(k);else PRI_COLL.add(k);renderPri();return}
  const gb=t.closest('[data-go]');if(gb){renderDetail(+gb.dataset.go,'pri');return}
  const ck=t.closest('.ck');if(ck){if(ck.dataset.pi!==undefined)togglePatient(+ck.dataset.pi);else toggleCheck(ck.dataset.id);return}
- const tsb=t.closest('[data-tsort]');if(tsb){TODO_SORT=tsb.dataset.tsort;renderTodo();return}
- const tdo=t.closest('.tdo');if(tdo){openNote(+tdo.dataset.note);return}
  const pr=t.closest('.pr');if(pr){renderDetail(+pr.dataset.i,'all');return}
  if(t.closest('#mn')){openMenu();return}
  const ac=t.closest('[data-act]');
@@ -991,10 +1024,10 @@ function lock() {
   if (AUDIO) { AUDIO.pause(); AUDIO = null; }
   BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};
   st = newSt();
-  ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#todo', '#npd', '#npbar', '#printdoc'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
-  $('#np').style.display = 'none'; document.body.style.overflow = '';
+  ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#npd', '#npbar', '#printdoc'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
+  document.body.style.overflow = '';
   $('#q').value = ''; $('#lp').value = ''; $('#lu').value = ''; REQ_MSG = '';
-  $('.tb [data-tab=pri]').textContent = '優先'; $('.tb [data-tab=all]').textContent = '全部'; $('.tb [data-tab=todo]').textContent = '待辦';
+  $('.tb [data-tab=pri]').textContent = '優先'; $('.tb [data-tab=all]').textContent = '全部'
   ['#menu', '#dlg', '#toast'].forEach(s => $(s).classList.remove('on'));
   $('#detail').style.display = 'none'; document.body.style.overflow = ''; hist('');
   if (!REG || REG.state !== 'ok') return;
@@ -1088,16 +1121,31 @@ function bindSwipe(chart) {
   const bg = $('#swbg');
   const lift = on => { bg.style.display = on ? 'block' : 'none'; el.classList.toggle('dragging', on); };
   const reset = anim => {
-    el.style.transition = anim ? 'transform .22s ease' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl';
-    if (anim) setTimeout(() => { if (!s) lift(false); }, 230); else lift(false);
+    el.style.transition = anim ? 'transform .4s cubic-bezier(.32,1.2,.5,1)' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl';
+    if (anim) setTimeout(() => { if (!s) lift(false); }, 400); else lift(false);
   };
+  // 上下導覽：斜上快甩 = 下一位；長按後上拉 = 下一位、下拉 = 上一位（按鈕仍可用）；左右甩 = 待辦 / 已完成
+  let lpT = null;
+  const navh = $('#navh');
+  const showNav = txt => { navh.textContent = txt; navh.classList.add('on'); };
+  const hideNav = () => navh.classList.remove('on');
   el.addEventListener('touchstart', e => {
-    if (e.touches.length !== 1 || $('#np').style.display === 'block' || e.target.closest('textarea,input')) { s = null; return; }
-    const t = e.touches[0]; s = {x: t.clientX, y: t.clientY, t: Date.now()}; dir = null; el.style.transition = 'none';
+    if (e.touches.length !== 1 || e.target.closest('textarea,input')) { s = null; return; }
+    const t = e.touches[0], now = Date.now();
+    s = {x: t.clientX, y: t.clientY, t: now, lx: t.clientX, lt: now, v: 0, lp: false, moved: false}; dir = null; el.style.transition = 'none';
+    clearTimeout(lpT);
+    lpT = setTimeout(() => { if (s && !s.moved) { s.lp = true; showNav('上滑 下一位 · 下滑 上一位'); } }, 380);   // 長按 → 上下導覽模式
   }, {passive: true});
   el.addEventListener('touchmove', e => {
     if (!s) return;
-    const t = e.touches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+    const t = e.touches[0], dx = t.clientX - s.x, dy = t.clientY - s.y, now = Date.now();
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) { s.moved = true; if (!s.lp) clearTimeout(lpT); }
+    s.v = (t.clientX - s.lx) / Math.max(now - s.lt, 1); s.lx = t.clientX; s.lt = now;   // px/ms，正數 = 向右
+    if (s.lp) {                                                  // 長按後拖動：只做上下導覽，不捲動、不做左右動作
+      e.preventDefault();
+      showNav(dy <= -60 ? '放開 → 下一位' : dy >= 60 ? '放開 → 上一位' : '上滑 下一位 · 下滑 上一位');
+      return;
+    }
     // 水平分量 ≥ 垂直分量的 45% 就視為水平（弧線甩動）；幾乎純上下才當成捲動內容
     if (dir === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) dir = Math.abs(dx) >= Math.abs(dy) * .45 ? 'h' : 'v';
     if (dir !== 'h') return;
@@ -1106,21 +1154,24 @@ function bindSwipe(chart) {
     el.style.transform = pose(dx, dy);   // 拖動中不顯示「待辦 / 已完成」字樣（使用者要求拿掉）
   }, {passive: false});
   el.addEventListener('touchend', e => {
+    clearTimeout(lpT); hideNav();
     const t = e.changedTouches && e.changedTouches[0], from = s; s = null;
-    if (!from || dir !== 'h' || !t) { reset(false); return; }
+    if (!from || !t) { reset(false); return; }
     const dx = t.clientX - from.x, dy = t.clientY - from.y, dt = Date.now() - from.t;
-    if (!commit(dx, dt)) { reset(true); return; }
+    if (from.lp) { reset(true); if (dy <= -60) go(1); else if (dy >= 60) go(-1); return; }   // 長按導覽
+    if (dy <= -120 && -dy >= Math.abs(dx) * 1.2 && -dy / Math.max(dt, 1) >= .5) { reset(true); go(1); return; }   // 斜上快甩 → 下一位
+    if (dir !== 'h' || !commit(dx, dt)) { reset(dir === 'h'); return; }
     const left = dx < 0;
-    el.style.transition = 'transform .22s ease';
+    el.style.transition = 'transform .3s cubic-bezier(.2,.8,.2,1)';
     el.style.transform = `translateX(${left ? -140 : 140}vw) translateY(${dy * .35}px) rotate(${left ? -18 : 18}deg)`;
     lab.className = 'swl';
-    setTimeout(() => { reset(false); swipeDone(SW_CHART, left); }, 220);
+    setTimeout(() => { reset(false); swipeDone(SW_CHART, left); }, 280);
   }, {passive: true});
-  el.addEventListener('touchcancel', () => { s = null; reset(true); }, {passive: true});
+  el.addEventListener('touchcancel', () => { clearTimeout(lpT); hideNav(); s = null; reset(true); }, {passive: true});
 }
 function swipeDone(chart, left) {
   const pi = st.order[st.cur];
-  if (left) { setTodo(chart, true, null); const i = P.findIndex(p => p.chart === chart); openNote(i >= 0 ? i : pi, true); }
+  if (left) { setTodo(chart, true, null); }
   else if ((NOTES[chart] || {}).todo === true) {   // already 待辦: a right swipe must not clear the to-do just made
     toast('仍在待辦中，未變更'); if (st.cur < st.order.length - 1) go(1); else closeDetail();
   }
@@ -1133,18 +1184,17 @@ function setTodo(chart, on, pi) {
   if (!changed && on) return;
   UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null, pi: pi == null ? null : pi};
   if (changed) putNote(chart, on ? {todo: true, td: Date.now()} : {todo: false});
-  renderTodo(); renderTabs();
-  toastUndo(on ? '已加入待辦' : '已完成');
+  renderTabs(); refreshPend();
+  toastUndo(on ? '已加入待處理' : '已完成');
 }
 function undoNotes() {
   const u = UNDO;
   if (!u) return;
   UNDO = null;
   if (u.before == null) delete NOTES[u.chart]; else NOTES[u.chart] = JSON.parse(u.before);
-  saveNotes(); renderTodo(); renderTabs();
+  saveNotes(); renderTabs();
   $('#toast').classList.remove('on');
-  if (NOTE_I >= 0 && !(NOTES[P[NOTE_I].chart] || {}).todo) closeNote();
-  if (u.pi != null && $('#detail').style.display === 'block') renderDetail(u.pi);
+  if (u.pi != null && $('#detail').style.display === 'block') renderDetail(u.pi); else refreshPend();
 }
 /* toast with a 復原 button for 5 s (the pointer-events of the button are re-enabled in the CSS) */
 function toastUndo(text) {
@@ -1159,115 +1209,20 @@ function toastUndo(text) {
 const ymdLocal = ms => { const d = new Date(Number(ms)); return `${d.getMonth() + 1}/${d.getDate()}`; };
 const hmLocal = ms => { const d = new Date(Number(ms)); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 
-/* 待辦 tab: identity, attending and the to-do text only, plus 輸出 PDF */
-function renderTodo() {
-  const el = $('#todo');
-  if (!el || !P) return;
-  const idx = todoSorted();
-  if (!idx.length) { el.innerHTML = '<div class="empty">沒有待辦<small>在病人頁左滑即可加入待辦；右滑表示已完成</small></div>'; return; }
-  const SORTS = [['bed', '床號'], ['vs', '主治'], ['date', '日期'], ['zone', '內外圍']];
-  let h = `<div class="tdh"><span>${idx.length} 位 · ${esc(ymdLocal(Date.now()))}</span><button class="docb" data-doc="todo" type="button">輸出 Doc</button></div>`
-        + `<div class="tds">${SORTS.map(s => `<button type="button" data-tsort="${s[0]}" class="${TODO_SORT === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</div>`;
-  h += '<div class="swh">左滑即可刪除待辦</div>';
-  let last = null;
-  idx.forEach(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done && x.t), g = todoGroup(p);
-    if (g !== null && g !== last) { h += `<div class="tdg">${esc(g)}</div>`; last = g; }
-    h += `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
-  });
-  el.innerHTML = h;
-  if (!TODO_SWIPE_ON) bindTodoSwipe();
-}
-/* 待辦 tab: 左滑一列即刪除該待辦（與病人頁右滑「已完成」結果相同），5 秒內可按「復原」 */
-let TODO_SWIPE_ON = false;
-function deleteTodo(chart) {
-  if (!chart) return;
-  UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null, pi: null};
-  putNote(chart, {todo: false});
-  renderTodo(); renderTabs();
-  toastUndo('已刪除待辦');
-}
-function bindTodoSwipe() {
-  const el = $('#todo'), TH = 90, FLICK_PX = 40, FLICK_V = .45;   // px, px, px/ms
-  if (!el) return;
-  TODO_SWIPE_ON = true;
-  let s = null;
-  el.addEventListener('touchstart', e => {
-    const row = e.target.closest('.tdo');
-    if (!row || e.touches.length !== 1) { s = null; return; }
-    const t = e.touches[0];
-    s = {row: row, x: t.clientX, y: t.clientY, t: Date.now(), dir: null};
-    row.style.transition = 'none';
-  }, {passive: true});
-  el.addEventListener('touchmove', e => {
-    if (!s) return;
-    const t = e.touches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
-    if (s.dir === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) s.dir = Math.abs(dx) >= Math.abs(dy) * 1.5 ? 'h' : 'v';
-    if (s.dir !== 'h') return;                       // vertical = normal scrolling
-    s.row.style.transform = `translateX(${Math.min(0, dx)}px)`;   // leftwards only
-  }, {passive: true});
-  el.addEventListener('touchend', e => {
-    const from = s; s = null;
-    if (!from) return;
-    const row = from.row, t = e.changedTouches && e.changedTouches[0];
-    const dx = t ? t.clientX - from.x : 0, dt = Date.now() - from.t;
-    const hit = from.dir === 'h' && dx < 0 && (dx <= -TH || (dx <= -FLICK_PX && -dx / Math.max(dt, 1) >= FLICK_V));
-    const i = +row.dataset.note;
-    if (!hit || !P || !P[i]) { row.style.transition = 'transform .2s ease'; row.style.transform = ''; return; }
-    row.style.transition = 'transform .2s ease'; row.style.transform = 'translateX(-110%)';
-    const chart = P[i].chart;
-    setTimeout(() => deleteTodo(chart), 200);
-  }, {passive: true});
-  el.addEventListener('touchcancel', () => { s = null; renderTodo(); }, {passive: true});
-}
-
-/* 待辦排序：床號（預設，P 原順序）/ 主治 / 日期（加入待辦的日子，新到舊）/ 內外圍；清單與輸出 Doc 共用 */
-let TODO_SORT = 'bed';
-const todoDay = p => { const t = (NOTES[p.chart] || {}).td; return t ? isoDay(t) : '更早'; };
-function todoGroup(p) { return TODO_SORT === 'vs' ? (p.vs || '–') : TODO_SORT === 'zone' ? (p.zone || '–') : TODO_SORT === 'date' ? todoDay(p) : null; }
-function todoSorted() {
-  const base = todoIdx(), idx = base.slice(), rank = i => base.indexOf(i);
-  if (TODO_SORT === 'vs') idx.sort((a, b) => String(P[a].vs || '~').localeCompare(String(P[b].vs || '~'), 'zh-Hant') || rank(a) - rank(b));
-  else if (TODO_SORT === 'zone') { const z = p => p.zone === '內圍' ? 0 : p.zone === '外圍' ? 1 : 2; idx.sort((a, b) => z(P[a]) - z(P[b]) || rank(a) - rank(b)); }
-  else if (TODO_SORT === 'date') idx.sort((a, b) => ((NOTES[P[b].chart] || {}).td || 0) - ((NOTES[P[a].chart] || {}).td || 0) || rank(a) - rank(b));
-  return idx;
-}
-
 /* notepad page: Apple-Notes style checklist (Enter = next check, done = strike-through and moves down) + record bar */
-/* 記事本頁不因系統返回手勢（右滑）回到待辦：返回事件會把記事本重新推回來，只有「‹ 待辦」能關閉 */
-let NOTE_PUSHED = false, NOTE_SILENT = false;
-window.addEventListener('popstate', () => {
-  if (NOTE_SILENT) { NOTE_SILENT = false; return; }          // our own history.back() from closeNote
-  if (NOTE_PUSHED && NOTE_I >= 0) history.pushState({np: 1}, '');
-});
-function openNote(i, slide) {
-  if (!P || !P[i]) return;
-  NOTE_I = i;
-  if (!NOTE_PUSHED) { history.pushState({np: 1}, ''); NOTE_PUSHED = true; }
-  $('#npt').textContent = `${P[i].bed} ${P[i].name}`;
-  const np = $('#np');
-  np.style.display = 'block'; document.body.style.overflow = 'hidden'; np.scrollTop = 0;
-  np.classList.remove('slide');
-  if (slide) { void np.offsetWidth; np.classList.add('slide'); }
-  drawNote();
-}
+/* 待處理（病人頁）的 checklist 與錄音：由 renderPend 把 #npd / #npbar 搬進「待處理」區塊 */
+function openNote(i) { NOTE_I = i; renderPend(i); }
 function closeNote() {
   commitNew();
   if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }
-  if (NOTE_PUSHED) { NOTE_PUSHED = false; NOTE_SILENT = true; history.back(); }   // drop the note's history entry quietly
-  $('#np').style.display = 'none'; NOTE_I = -1;
-  if ($('#detail').style.display !== 'block') document.body.style.overflow = '';
-  saveNotes(); renderTodo(); renderTabs();
+  NOTE_I = -1;
+  saveNotes(); renderTabs();
 }
-function noteRow(x) {
-  const t = esc(x.t);
-  return `<li class="${x.done ? 'done' : ''}"><span class="cbx" data-ntoggle="${esc(x.id)}" role="checkbox" aria-checked="${!!x.done}"></span><input class="ni" data-id="${esc(x.id)}" type="text" enterkeyhint="next" maxlength="200" autocomplete="off" value="${t}"${x.done ? ' readonly' : ''}>${x.done ? `<button type="button" class="nd" data-ndel="${esc(x.id)}" aria-label="刪除">×</button>` : ''}</li>`;
-}
-/* focusId: an item id, '' = the empty line at the end, undefined = leave the focus alone */
 function drawNote(focusId) {
   const p = P && P[NOTE_I];
   if (!p) return;
   const items = noteItems(p.chart), open = items.filter(x => !x.done), done = items.filter(x => x.done);
-  $('#npd').innerHTML = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2><div class="sub">主治 ${esc(p.vs || '–')} · ${esc(ymdLocal(Date.now()))}</div></div>
+  $('#npd').innerHTML = `
     <ul class="cl">${open.map(noteRow).join('')}<li class="new"><span class="cbx"></span><input class="ni" id="npnew" data-id="" type="text" enterkeyhint="done" maxlength="200" autocomplete="off" placeholder="新增待辦…"></li></ul>
     ${done.length ? `<div class="donehd">已完成 ${done.length}</div><ul class="cl dn">${done.map(noteRow).join('')}</ul>` : ''}`;
   drawBar();
@@ -1296,9 +1251,19 @@ function commitNew() {
   return it;
 }
 function noteEdit(fn) { const p = P && P[NOTE_I]; if (!p) return; putNote(p.chart, {items: fn(noteItems(p.chart))}); }
-function toggleNoteItem(id) { commitNew(); noteEdit(L => L.map(x => x.id === id ? Object.assign({}, x, {done: !x.done}) : x)); drawNote(); }
+function toggleNoteItem(id) { commitNew(); noteEdit(L => L.map(x => x.id === id ? Object.assign({}, x, {done: !x.done, dt: x.done ? null : Date.now()}) : x)); drawNote(); }
 function delNoteItem(id) { noteEdit(L => L.filter(x => x.id !== id)); drawNote(); }
-$('#npb').onclick = closeNote;
+/* tap the top bar (page title row / patient or notepad nav bar) = scroll the visible page back to its top.
+   (iOS does not pass a status-bar tap to the page, so the top bar is the tap target instead) */
+function scrollTopActive() {
+  const dt = $('#detail');
+  const sc = dt.style.display === 'block' ? dt : null;
+  if (sc) sc.scrollTo({top: 0, behavior: 'smooth'}); else window.scrollTo({top: 0, behavior: 'smooth'});
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('button,input,textarea,select,a')) return;   // buttons keep their own behaviour
+  if (e.target.closest('.hd, .nav')) scrollTopActive();
+});
 $('#npd').addEventListener('input', e => {
   const t = e.target, p = P && P[NOTE_I];
   if (!p || !t.classList.contains('ni') || !t.dataset.id) return;
@@ -1347,14 +1312,7 @@ const isoDay = ms => { const d = new Date(Number(ms)); const p = n => String(n).
 const docRow = p => ({bed: String(p.bed || ''), name: String(p.name || ''), chart: String(p.chart || ''), vs: String(p.vs || '')});
 function docGroups(kind) {
   const out = [];
-  if (kind === 'todo') {
-    let cur = null;
-    todoSorted().forEach(i => { const p = P[i], done = noteItems(p.chart).filter(x => x.done && x.t).map(x => String(x.t));
-      if (!done.length) return;
-      const g = todoGroup(p) || '';
-      if (!cur || cur.h !== g) { cur = {h: g, rows: []}; out.push(cur); }
-      cur.rows.push(Object.assign(docRow(p), {done: done})); });
-  } else if (kind === 'pri') {
+  if (kind === 'pri') {
     const gs = patientGroups();
     GROUPS.forEach(g => { const rows = gs.filter(x => x.g === g.g).sort((a, b) => a.pi - b.pi).map(x => Object.assign(docRow(P[x.pi] || {}), {chk: !!x.done}));
       if (rows.length) out.push({h: String(g.name), rows: rows}); });
@@ -1366,9 +1324,9 @@ function docGroups(kind) {
   return out;
 }
 async function exportDoc(kind) {
-  kind = kind === 'pri' || kind === 'all' ? kind : 'todo';
+  kind = kind === 'pri' ? 'pri' : 'all';
   const groups = docGroups(kind);
-  if (!groups.length) { toast(kind === 'todo' ? '沒有已完成的待辦可輸出' : '沒有可輸出的病人'); return; }
+  if (!groups.length) { toast('沒有可輸出的病人'); return; }
   if (!REG || !REG.access) { toast('尚未連線，無法建立 Doc'); return; }
   toast('建立 Google Doc 中…');
   const win = window.open('', '_blank');     // opened inside the click (iPhone blocks popups opened after the await)
