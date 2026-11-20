@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v12';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v17';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -119,8 +119,9 @@ function renderPri() {
   const el = $('#pri');
   if (!ITEMS.length) { el.innerHTML = '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
   const groups = patientGroups(), open = groups.filter(x => !x.done), done = groups.filter(x => x.done);
-  const row = x => { const p = P[x.pi] || {};
-    return `<div class="ck${x.done ? ' done' : ''}" role="checkbox" aria-checked="${x.done}" tabindex="0" data-pi="${Number(x.pi)}"><span class="cbx"></span><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="pchips">${x.its.map(chipHtml).join('')}</span><span class="sp"></span><button class="go" type="button" data-go="${Number(x.pi)}" aria-label="開啟病人頁">›</button></div>`; };
+  /* row: [✓] | bed / name / chart + attending | chips: 生命徵象 (g1) first, then the other colour blocks in fixed order, every row the same */
+  const row = x => { const p = P[x.pi] || {}, its = x.its.slice().sort((a, b) => a.g - b.g);
+    return `<div class="ck${x.done ? ' done' : ''}" role="checkbox" aria-checked="${x.done}" tabindex="0" data-pi="${Number(x.pi)}"><span class="cbx"></span><span class="idc"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="pmeta">${esc(p.chart || '')}</span><span class="pmeta">${esc(p.vs || '')}</span></span><span class="pchips">${its.map(chipHtml).join('')}</span><button class="go" type="button" data-go="${Number(x.pi)}" aria-label="開啟病人頁">›</button></div>`; };
   let h = `<div class="pg"><span>${done.length} / ${groups.length} 人</span><div class="pgb"><span style="width:${Math.round(done.length / groups.length * 100)}%"></span></div></div>`;
   GROUPS.forEach(g => { const rows = open.filter(x => x.g === g.g);
     if (rows.length) h += `<div class="gh g${g.g}"><i></i>${g.name} · ${rows.length}</div>` + rows.map(row).join(''); });
@@ -1038,33 +1039,39 @@ function bindSwipe(chart) {
   SW_CHART = chart;
   if (SW_ON) return;
   SW_ON = true;
-  const el = $('#detail'), lab = $('#swl'), TH = 110;
+  const el = $('#detail'), lab = $('#swl'), TH = 90, FLICK_PX = 40, FLICK_V = .45; // px, px, px/ms
   let s = null, dir = null;
-  const reset = anim => { el.style.transition = anim ? 'transform .2s ease, opacity .2s ease' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl'; };
+  // 卡片跟著拇指的弧線走：水平位移為主，垂直位移只跟 35%，所以斜向甩動（左手左上、右手右上）也會往該側飛出
+  const pose = (dx, dy) => `translateX(${dx}px) translateY(${dy * .35}px) rotate(${dx / 25}deg)`;
+  const commit = (dx, dt) => Math.abs(dx) >= TH || (Math.abs(dx) >= FLICK_PX && Math.abs(dx) / Math.max(dt, 1) >= FLICK_V);
+  const reset = anim => { el.style.transition = anim ? 'transform .22s ease, opacity .22s ease' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl'; };
   el.addEventListener('touchstart', e => {
     if (e.touches.length !== 1 || $('#np').style.display === 'block') { s = null; return; }
-    const t = e.touches[0]; s = {x: t.clientX, y: t.clientY}; dir = null; el.style.transition = 'none';
+    const t = e.touches[0]; s = {x: t.clientX, y: t.clientY, t: Date.now()}; dir = null; el.style.transition = 'none';
   }, {passive: true});
   el.addEventListener('touchmove', e => {
     if (!s) return;
     const t = e.touches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
-    if (dir === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) dir = Math.abs(dx) > Math.abs(dy) * 1.5 ? 'h' : 'v';
+    // 水平分量 ≥ 垂直分量的 45% 就視為水平（弧線甩動）；幾乎純上下才當成捲動內容
+    if (dir === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) dir = Math.abs(dx) >= Math.abs(dy) * .45 ? 'h' : 'v';
     if (dir !== 'h') return;
     e.preventDefault();
-    el.style.transform = `translateX(${dx}px) rotate(${dx / 30}deg)`;
+    el.style.transform = pose(dx, dy);
     el.style.opacity = String(Math.max(.4, 1 - Math.abs(dx) / 600));
+    const go = commit(dx, Date.now() - s.t);
     lab.textContent = dx < 0 ? '待辦' : '沒問題';
-    lab.className = 'swl on ' + (dx < 0 ? 'l' : 'r') + (Math.abs(dx) > TH ? ' go' : '');
+    lab.className = 'swl on ' + (dx < 0 ? 'l' : 'r') + (go ? ' go' : '');
   }, {passive: false});
   el.addEventListener('touchend', e => {
     const t = e.changedTouches && e.changedTouches[0], from = s; s = null;
     if (!from || dir !== 'h' || !t) { reset(false); return; }
-    const dx = t.clientX - from.x;
-    if (Math.abs(dx) < TH) { reset(true); return; }
-    el.style.transition = 'transform .2s ease, opacity .2s ease';
-    el.style.transform = `translateX(${dx < 0 ? -140 : 140}vw) rotate(${dx < 0 ? -18 : 18}deg)`; el.style.opacity = '0';
+    const dx = t.clientX - from.x, dy = t.clientY - from.y, dt = Date.now() - from.t;
+    if (!commit(dx, dt)) { reset(true); return; }
+    const left = dx < 0;
+    el.style.transition = 'transform .22s ease, opacity .22s ease';
+    el.style.transform = `translateX(${left ? -140 : 140}vw) translateY(${dy * .35}px) rotate(${left ? -18 : 18}deg)`; el.style.opacity = '0';
     lab.className = 'swl';
-    setTimeout(() => { reset(false); swipeDone(SW_CHART, dx < 0); }, 200);
+    setTimeout(() => { reset(false); swipeDone(SW_CHART, left); }, 220);
   }, {passive: true});
   el.addEventListener('touchcancel', () => { s = null; reset(true); }, {passive: true});
 }
