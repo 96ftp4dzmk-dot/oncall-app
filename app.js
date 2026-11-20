@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v42';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v43';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -371,7 +371,11 @@ function renderDetail(i, from) {
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
      + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
      + fold('目前處方', drugs.length, drugBoxes, true)
-     + fold('特殊交班事項', (NOTES[p.chart] || {}).sp ? '有內容' : '', `<textarea id="spx" class="spx" rows="4" placeholder="自行輸入（只存在這支手機，加密保存）">${esc((NOTES[p.chart] || {}).sp || '')}</textarea>`, !!(NOTES[p.chart] || {}).sp)
+     /* 特殊交班事項: the PC's text (p.spx, from OnCall\特殊交班*.xlsx / .csv, read-only) above the hand-written box */
+     + fold('特殊交班事項', (p.spx || (NOTES[p.chart] || {}).sp) ? '有內容' : '',
+         (p.spx ? `<div class="sub2">電腦帶入</div><div class="memo">${esc(p.spx)}</div><div class="sub2">手寫（只存這支手機）</div>` : '')
+         + `<textarea id="spx" class="spx" rows="4" placeholder="自行輸入（只存在這支手機，加密保存）">${esc((NOTES[p.chart] || {}).sp || '')}</textarea>`,
+         !!(p.spx || (NOTES[p.chart] || {}).sp))
      + fold('交班與交代事項', '', p.memo ? `<div class="memo">${esc(p.memo)}</div>` : '', true)
      + fold('護理紀錄', p.nurs ? p.nurs.w : '', p.nurs ? `<div class="memo">${esc(p.nurs.t)}</div>` : '', false);
   $('#np').append($('#npd'), $('#npbar'));   // keep the checklist / recording alive while #db is rewritten
@@ -383,7 +387,7 @@ function renderDetail(i, from) {
     if (v.trim()) n.sp = v; else delete n.sp;
     if (Object.keys(n).length) NOTES[p.chart] = n; else delete NOTES[p.chart];
     noteSaveSoon();
-    const s = $('#spx').closest('details').querySelector('summary small'); if (s) s.textContent = v.trim() ? '有內容' : '';
+    const s = $('#spx').closest('details').querySelector('summary small'); if (s) s.textContent = (v.trim() || p.spx) ? '有內容' : '';
   };
   $('#prev').disabled = st.cur <= 0; $('#next').disabled = st.cur >= st.order.length - 1;
   $('#prev').onclick = () => go(-1); $('#next').onclick = () => go(1);
