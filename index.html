@@ -250,7 +250,13 @@ details.tg .in{padding:0 0 12px 8px}
 
 /* ---- v12: Tinder swipe label, Notes-style checklist, bottom record bar, print sheet ---- */
 .swl{position:fixed;top:30%;left:50%;z-index:40;padding:8px 22px;border:3px solid currentColor;border-radius:14px;font:700 26px var(--serif);letter-spacing:.08em;opacity:0;pointer-events:none;transform:translateX(-50%)}
-.swl.on{opacity:.8}.swl.l{color:var(--acc);transform:translateX(-50%) rotate(-8deg)}.swl.r{color:var(--okc);transform:translateX(-50%) rotate(8deg)}.swl.go{opacity:1}
+.swl.on{opacity:.8}.swl.l{color:var(--acc);transform:translateX(-50%) rotate(-8deg)}.swl.r{color:var(--okc);transform:translateX(-50%) rotate(8deg)}.swl.fire{opacity:1}
+/* v20: swipe card stays opaque over a solid backdrop; stamp never wraps */
+.swl{white-space:nowrap;background:var(--bg)}
+#swbg{display:none;position:fixed;inset:0;z-index:9;background:var(--band)}
+.spx{display:block;width:100%;box-sizing:border-box;min-height:96px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--surf);color:var(--ink);font:15px/1.5 var(--sans);resize:vertical}
+.spx:focus{outline:none;border-color:var(--acc)}
+#detail.dragging{border-radius:22px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
 /* ---- v13: 優先 list less crowded: smaller type, one-line chips, tighter rows ---- */
 .pr{padding:9px 12px}
 .pr .r1{gap:6px}
@@ -362,6 +368,7 @@ details.tg .in{padding:0 0 12px 8px}
 <div id="menu" class="ov"><div class="sheet"><button type="button" data-act="help">優先門檻</button><button type="button" data-act="lock">鎖定</button><button type="button" class="danger" data-act="clear">清除本機資料</button><div class="ver" id="ver"></div></div></div>
 <div id="dlg" class="ov"><div class="dbox"><p id="dtx"></p><div class="row2"><button type="button" id="dno">取消</button><button type="button" id="dok" class="ok">確定</button></div></div></div>
 <div id="toast"></div>
+<div id="swbg"></div>
 <div id="swl" class="swl"></div>
 <div id="printdoc"></div>
 <script src="config.js"></script>

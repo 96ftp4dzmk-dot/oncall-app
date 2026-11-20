@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v19';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v21';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -287,7 +287,7 @@ function renderDetail(i, from) {
   const props = [['病歷號', esc(p.chart)], ['科別', `${esc(p.dept)} · ${esc(p.zone)}`], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['體重', wt], ['IO 入/出', io], ['UO 尿量（今日）', uo], ['標記', tags(p)]].filter(r => r[1]);
   let h = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2></div>
   <dl class="props">${props.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>
-  <div class="swh">左滑：加入待辦 ・ 右滑：沒什麼問題（可復原）</div>
+  <div class="swh">左滑：加入待辦 ・ 右滑：已完成（可復原）</div>
   <div class="blk" id="pend"></div>
   <div class="blk"><h3>生命徵象 · 72 小時</h3><div id="vsbox"></div><div class="rd" id="read"></div></div>`;
   const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };
@@ -308,11 +308,20 @@ function renderDetail(i, from) {
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
      + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
      + fold('目前處方', drugs.length, drugBoxes, true)
+     + fold('特殊交班事項', (NOTES[p.chart] || {}).sp ? '有內容' : '', `<textarea id="spx" class="spx" rows="4" placeholder="自行輸入（只存在這支手機，加密保存）">${esc((NOTES[p.chart] || {}).sp || '')}</textarea>`, !!(NOTES[p.chart] || {}).sp)
      + fold('交班與交代事項', '', p.memo ? `<div class="memo">${esc(p.memo)}</div>` : '', true)
      + fold('護理紀錄', p.nurs ? p.nurs.w : '', p.nurs ? `<div class="memo">${esc(p.nurs.t)}</div>` : '', false);
   h += '<div class="pn2"><button id="prev" type="button">‹ 上一位</button><button id="next" type="button">下一位 ›</button></div>';
   $('#db').innerHTML = h;
   renderPend(i); renderStrips(p); bindStrips(p); bindSwipe(p.chart);
+  /* 特殊交班事項: free text per patient, kept in NOTES[chart].sp (sealed with the notes, local only) */
+  $('#spx').oninput = e => {
+    const v = e.target.value, n = Object.assign({}, NOTES[p.chart] || {});
+    if (v.trim()) n.sp = v; else delete n.sp;
+    if (Object.keys(n).length) NOTES[p.chart] = n; else delete NOTES[p.chart];
+    noteSaveSoon();
+    const s = $('#spx').closest('details').querySelector('summary small'); if (s) s.textContent = v.trim() ? '有內容' : '';
+  };
   $('#prev').disabled = st.cur <= 0; $('#next').disabled = st.cur >= st.order.length - 1;
   $('#prev').onclick = () => go(-1); $('#next').onclick = () => go(1);
   $('#detail').style.display = 'block'; $('#detail').scrollTop = 0; document.body.style.overflow = 'hidden';
@@ -1033,7 +1042,7 @@ const noteItems = chart => Array.isArray((NOTES[chart] || {}).items) ? NOTES[cha
 const noteAudio = chart => Array.isArray((NOTES[chart] || {}).audio) ? NOTES[chart].audio : [];
 
 /* Tinder-style swipe on the patient page: the page follows the finger and tilts; past the threshold it flies off.
- * Left = 待辦: the notepad slides in (the patient is marked 待辦). Right = 沒問題: next patient. Both can be undone. */
+ * Left = 待辦: the notepad slides in (the patient is marked 待辦). Right = 已完成: next patient. Both can be undone. */
 let SW_CHART = null, SW_ON = false;
 function bindSwipe(chart) {
   SW_CHART = chart;
@@ -1044,9 +1053,15 @@ function bindSwipe(chart) {
   // 卡片跟著拇指的弧線走：水平位移為主，垂直位移只跟 35%，所以斜向甩動（左手左上、右手右上）也會往該側飛出
   const pose = (dx, dy) => `translateX(${dx}px) translateY(${dy * .35}px) rotate(${dx / 25}deg)`;
   const commit = (dx, dt) => Math.abs(dx) >= TH || (Math.abs(dx) >= FLICK_PX && Math.abs(dx) / Math.max(dt, 1) >= FLICK_V);
-  const reset = anim => { el.style.transition = anim ? 'transform .22s ease, opacity .22s ease' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl'; };
+  // 卡片拖動時全程不透明；後面墊一層實心底（#swbg），傾斜露出的角落不會透出清單
+  const bg = $('#swbg');
+  const lift = on => { bg.style.display = on ? 'block' : 'none'; el.classList.toggle('dragging', on); };
+  const reset = anim => {
+    el.style.transition = anim ? 'transform .22s ease' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl';
+    if (anim) setTimeout(() => { if (!s) lift(false); }, 230); else lift(false);
+  };
   el.addEventListener('touchstart', e => {
-    if (e.touches.length !== 1 || $('#np').style.display === 'block') { s = null; return; }
+    if (e.touches.length !== 1 || $('#np').style.display === 'block' || e.target.closest('textarea,input')) { s = null; return; }
     const t = e.touches[0]; s = {x: t.clientX, y: t.clientY, t: Date.now()}; dir = null; el.style.transition = 'none';
   }, {passive: true});
   el.addEventListener('touchmove', e => {
@@ -1056,11 +1071,8 @@ function bindSwipe(chart) {
     if (dir === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) dir = Math.abs(dx) >= Math.abs(dy) * .45 ? 'h' : 'v';
     if (dir !== 'h') return;
     e.preventDefault();
-    el.style.transform = pose(dx, dy);
-    el.style.opacity = String(Math.max(.4, 1 - Math.abs(dx) / 600));
-    const go = commit(dx, Date.now() - s.t);
-    lab.textContent = dx < 0 ? '待辦' : '沒問題';
-    lab.className = 'swl on ' + (dx < 0 ? 'l' : 'r') + (go ? ' go' : '');
+    lift(true);
+    el.style.transform = pose(dx, dy);   // 拖動中不顯示「待辦 / 已完成」字樣（使用者要求拿掉）
   }, {passive: false});
   el.addEventListener('touchend', e => {
     const t = e.changedTouches && e.changedTouches[0], from = s; s = null;
@@ -1068,8 +1080,8 @@ function bindSwipe(chart) {
     const dx = t.clientX - from.x, dy = t.clientY - from.y, dt = Date.now() - from.t;
     if (!commit(dx, dt)) { reset(true); return; }
     const left = dx < 0;
-    el.style.transition = 'transform .22s ease, opacity .22s ease';
-    el.style.transform = `translateX(${left ? -140 : 140}vw) translateY(${dy * .35}px) rotate(${left ? -18 : 18}deg)`; el.style.opacity = '0';
+    el.style.transition = 'transform .22s ease';
+    el.style.transform = `translateX(${left ? -140 : 140}vw) translateY(${dy * .35}px) rotate(${left ? -18 : 18}deg)`;
     lab.className = 'swl';
     setTimeout(() => { reset(false); swipeDone(SW_CHART, left); }, 220);
   }, {passive: true});
@@ -1080,7 +1092,7 @@ function swipeDone(chart, left) {
   if (left) { setTodo(chart, true, null); const i = P.findIndex(p => p.chart === chart); openNote(i >= 0 ? i : pi, true); }
   else { setTodo(chart, false, pi); if (st.cur < st.order.length - 1) go(1); else closeDetail(); }
 }
-/* on = 待辦 / off = 沒問題. pi = the patient page to come back to when the 復原 button is used (right swipe) */
+/* on = 待辦 / off = 已完成. pi = the patient page to come back to when the 復原 button is used (right swipe) */
 function setTodo(chart, on, pi) {
   if (!chart) return;
   const cur = NOTES[chart] || {}, changed = (cur.todo === true) !== on;
@@ -1088,7 +1100,7 @@ function setTodo(chart, on, pi) {
   UNDO = {chart: chart, before: NOTES[chart] ? JSON.stringify(NOTES[chart]) : null, pi: pi == null ? null : pi};
   if (changed) putNote(chart, {todo: on});
   renderTodo(); renderTabs();
-  toastUndo(on ? '已加入待辦' : '沒問題');
+  toastUndo(on ? '已加入待辦' : '已完成');
 }
 function undoNotes() {
   const u = UNDO;
@@ -1118,7 +1130,7 @@ function renderTodo() {
   const el = $('#todo');
   if (!el || !P) return;
   const idx = todoIdx();
-  if (!idx.length) { el.innerHTML = '<div class="empty">沒有待辦<small>在病人頁左滑即可加入待辦；右滑表示沒問題</small></div>'; return; }
+  if (!idx.length) { el.innerHTML = '<div class="empty">沒有待辦<small>在病人頁左滑即可加入待辦；右滑表示已完成</small></div>'; return; }
   el.innerHTML = `<div class="tdh"><span>${idx.length} 位 · ${esc(ymdLocal(Date.now()))}</span><button id="pdfall" type="button">輸出 PDF</button></div>` + idx.map(i => { const p = P[i], open = noteItems(p.chart).filter(x => !x.done && x.t);
     return `<div class="tdo" role="button" tabindex="0" data-note="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span></div><div class="vs2">主治 ${esc(p.vs || '–')}</div>${open.length ? `<ul>${open.slice(0, 4).map(x => `<li>${esc(x.t)}</li>`).join('')}${open.length > 4 ? `<li class="sub">+${open.length - 4} 項</li>` : ''}</ul>` : '<div class="sub">尚無待辦文字</div>'}</div>`;
   }).join('');
