@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v45';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v46';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -343,7 +343,7 @@ function renderDetail(i, from) {
   const props = [['病歷號', esc(p.chart)], ['科別', `${esc(p.dept)} · ${esc(p.zone)}`], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['體重', wt], ['IO 入/出', io], ['UO 尿量（今日）', uo], ['標記', tags(p)]].filter(r => r[1]);
   let h = `<div class="dh"><h2 class="ttl"><span class="b">${esc(p.bed)}</span>${esc(p.name)}</h2></div>
   <dl class="props">${props.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>
-  <div class="swh">左滑加入待處理，右滑標為已完成（可復原）・頂端下拉上一位，底端上拉下一位</div>
+  <div class="swh">左滑加入待處理，右滑標為已完成（可復原）・長按後上拖下一位、下拖上一位</div>
   <div class="blk" id="pend"></div>
   <div class="blk"><h3>生命徵象 · 72 小時</h3><div id="vsbox"></div><div class="rd" id="read"></div></div>`;
   const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };
@@ -1127,55 +1127,59 @@ function bindSwipe(chart) {
     el.style.transition = anim ? 'transform .4s cubic-bezier(.32,1.2,.5,1)' : 'none'; el.style.transform = ''; el.style.opacity = ''; lab.className = 'swl';
     if (anim) setTimeout(() => { if (!s) lift(false); }, 400); else lift(false);
   };
-  // 上下換人：在頁面最上方往下拖 = 上一位，在最下方往上拖 = 下一位（像下拉更新，只在邊緣才觸發，一般捲動不受影響）；
-  // 拖曳中螢幕下方浮出「上一位 / 下一位」提示直到放開。按鈕仍可用。左右甩 = 待辦 / 已完成
-  const PULL_TH = 90;                                           // px：拖過這個距離放開才換人
+  // 上下換人：長按約 0.4 秒（期間手指不動）後拖曳，卡片跟著手指上下移動，螢幕下方浮出提示直到放開；
+  // 放開時往上拖過 PULL_TH = 下一位、往下拖過 = 上一位，不夠就彈回。沒有長按的上下滑動一律只是捲動，絕不換人。
+  // （斜上快甩、邊緣下拉 / 上拉換人都已移除。）按鈕仍可用。左右甩 = 待辦 / 已完成
+  const PULL_TH = 90, LP_MS = 400, LP_SLOP = 8;                // px, ms, px（長按期間允許的手指抖動）
   const navh = $('#navh');
   const showNav = txt => { navh.textContent = txt; navh.classList.add('on'); };
   const hideNav = () => navh.classList.remove('on');
-  const pullDist = (pull, dy) => Math.max(pull === 'prev' ? dy : -dy, 0);
-  const pullText = (pull, d) => {
-    const prev = pull === 'prev', has = prev ? st.cur > 0 : st.cur < st.order.length - 1;
-    if (!has) return prev ? '已是第一位' : '已是最後一位';
-    return d >= PULL_TH ? (prev ? '放開 → 上一位' : '放開 → 下一位') : (prev ? '繼續下拉 → 上一位' : '繼續上拉 → 下一位');
+  let lpT = null;
+  const navText = dy => {
+    const next = dy < 0, has = next ? st.cur < st.order.length - 1 : st.cur > 0;
+    if (Math.abs(dy) < 12) return '上拖 下一位 · 下拖 上一位';
+    if (!has) return next ? '已是最後一位' : '已是第一位';
+    return Math.abs(dy) >= PULL_TH ? (next ? '放開 → 下一位' : '放開 → 上一位') : (next ? '繼續上拖 → 下一位' : '繼續下拖 → 上一位');
   };
   el.addEventListener('touchstart', e => {
+    clearTimeout(lpT);
     if (e.touches.length !== 1 || e.target.closest('textarea,input')) { s = null; return; }
     const t = e.touches[0], now = Date.now();
-    s = {x: t.clientX, y: t.clientY, t: now, pull: null,
-         top: el.scrollTop <= 0, bot: el.scrollTop + el.clientHeight >= el.scrollHeight - 2};   // 起手時是否已在頂端 / 底端
+    s = {x: t.clientX, y: t.clientY, t: now, lp: false, moved: false};
     dir = null; el.style.transition = 'none';
+    lpT = setTimeout(() => {                                    // 0.4 秒內沒移動 → 進入換人拖曳模式
+      if (!s || s.moved) return;
+      s.lp = true; lift(true); showNav(navText(0));
+      if (navigator.vibrate) navigator.vibrate(10);
+    }, LP_MS);
   }, {passive: true});
   el.addEventListener('touchmove', e => {
     if (!s) return;
     const t = e.touches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (s.lp) {                                                  // 長按後：只做上下換人，不捲動、不做左右動作
+      e.preventDefault();
+      el.style.transform = `translateY(${Math.max(-160, Math.min(160, dy * .6))}px)`;
+      showNav(navText(dy));
+      return;
+    }
+    if (!s.moved && (Math.abs(dx) > LP_SLOP || Math.abs(dy) > LP_SLOP)) { s.moved = true; clearTimeout(lpT); }   // 一動就是捲動 / 左右滑
     // 方向在移動超過 12px 時決定一次：水平分量要大於垂直分量（< 45° 斜角）才算左右滑；
     // 捲動時拇指常帶弧線（水平約垂直的一半），以前的 45% 門檻會把捲動誤判成「右滑 = 已完成 → 下一位」
     if (dir === null && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) dir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
-    if (dir === 'v') {
-      if (!s.pull) s.pull = dy > 0 && s.top ? 'prev' : dy < 0 && s.bot ? 'next' : null;
-      if (!s.pull) return;                                       // 一般上下捲動：交給瀏覽器
-      e.preventDefault();
-      const d = pullDist(s.pull, dy);
-      lift(true);
-      el.style.transform = `translateY(${(s.pull === 'prev' ? 1 : -1) * Math.min(d * .4, 110)}px)`;
-      showNav(pullText(s.pull, d));
-      return;
-    }
-    if (dir !== 'h') return;
+    if (dir !== 'h') return;                                     // 上下：交給瀏覽器捲動
     e.preventDefault();
     lift(true);
     el.style.transform = pose(dx, dy);   // 拖動中不顯示「待辦 / 已完成」字樣（使用者要求拿掉）
   }, {passive: false});
   el.addEventListener('touchend', e => {
+    clearTimeout(lpT);
     const t = e.changedTouches && e.changedTouches[0], from = s; s = null;
     if (!from || !t) { hideNav(); reset(false); return; }
     const dx = t.clientX - from.x, dy = t.clientY - from.y, dt = Date.now() - from.t;
-    if (from.pull) {                                             // 邊緣拖曳換人
-      const d = pullDist(from.pull, dy), prev = from.pull === 'prev';
-      const has = prev ? st.cur > 0 : st.cur < st.order.length - 1;
-      reset(!(d >= PULL_TH && has));
-      if (d >= PULL_TH && has) { showNav(prev ? '上一位' : '下一位'); go(prev ? -1 : 1); setTimeout(hideNav, 600); }
+    if (from.lp) {                                               // 長按拖曳換人
+      const next = dy < 0, has = next ? st.cur < st.order.length - 1 : st.cur > 0, ok = Math.abs(dy) >= PULL_TH && has;
+      reset(!ok);
+      if (ok) { showNav(next ? '下一位' : '上一位'); go(next ? 1 : -1); setTimeout(hideNav, 600); }
       else hideNav();
       return;
     }
@@ -1188,7 +1192,7 @@ function bindSwipe(chart) {
     lab.className = 'swl';
     setTimeout(() => { reset(false); swipeDone(SW_CHART, left); }, 280);
   }, {passive: true});
-  el.addEventListener('touchcancel', () => { hideNav(); s = null; reset(true); }, {passive: true});
+  el.addEventListener('touchcancel', () => { clearTimeout(lpT); hideNav(); s = null; reset(true); }, {passive: true});
 }
 function swipeDone(chart, left) {
   const pi = st.order[st.cur];
