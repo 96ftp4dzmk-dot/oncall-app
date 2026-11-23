@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://script.google.com/macros/s/AKfycbxB17H_wYc88dGZaUi4pmkQKnI7ETcGBDDoR7STCmdBY_oTIY2-MzmLHbl-WWRADZo05A/exec https://script.googleusercontent.com; manifest-src 'self'; media-src blob:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Notes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F5F4EE" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-192.png" type="image/png">
+<title>Notes</title>
+<style>
+/* 暖紙 (warm paper): tokens from docs/ui-redesign/spec.md section 4. System fonts only (CSP). Vertical scrolling only. */
+:root{--bg:#F5F4EE;--surf:#FFFFFF;--ink:#1F1E1D;--sub:#77736A;--line:#E2DED3;--line2:#ECE9E0;--seg:#EAE7DD;--acc:#C96442;--boxc:#B9B3A6;--band:#E9E4D6;--okc:#5B8C5A;
+ --cv-bg:#F8DCD6;--cv-fg:#A3271A;--cv-solid:#C53A2A;--cn-bg:#E6DDF2;--cn-fg:#5B3A92;--co-bg:#F3E3D3;--co-fg:#8F4A1F;--cb-bg:#D6E4F5;--cb-fg:#1F4E8C;--ca-bg:#D3EDE8;--ca-fg:#1D6B5E;--ce-bg:#F4EBC7;--ce-fg:#7A5A0C;--newc:#2F6DB5;--eolc:#7A5C3E;--hover:#ECE9E0;
+ --sans:-apple-system,BlinkMacSystemFont,"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",sans-serif;--serif:"Songti TC","Noto Serif TC","PMingLiU","新細明體","MingLiU",-apple-system,BlinkMacSystemFont,"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",serif}
+:root{color-scheme:light}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--sans);overflow-x:hidden}
+button{font-family:inherit}
+.mk{font-weight:700;text-decoration:underline;text-underline-offset:2px}
+.sub{color:var(--sub)}
+.hid #list,.hid #detail{visibility:hidden}
+
+/* ---- boot / setup / pending / login: one centred column ---- */
+.pane,#boot{max-width:340px;margin:0 auto;padding:18vh 20px 20px;text-align:center}
+#boot{padding-top:30vh;color:var(--sub);font-size:13px}
+.logo{display:block;width:64px;height:64px;margin:0 auto 12px}
+.pane h2{margin:0 0 4px;font:500 30px/1.15 var(--serif)}
+.pane .sub{margin:0 0 18px;font-size:13px;min-height:1px}
+.pane form{text-align:left}
+.pane input{width:100%;height:48px;padding:0 14px;margin:6px 0;border:1px solid var(--line);border-radius:12px;background:var(--surf);color:var(--ink);font:16px var(--sans)}
+.pane button{width:100%;height:52px;margin-top:10px;border:0;border-radius:14px;background:var(--ink);color:var(--bg);font:500 16px var(--sans)}
+.pane button.ghost{background:var(--surf);color:var(--ink);border:1px solid var(--line);height:46px}
+.pane button:disabled{opacity:.5}
+.lnk,.pane button.lnk{width:auto;height:44px;padding:0 14px;margin:6px auto 0;border:0;background:none;color:var(--acc);font:500 15px var(--sans)}
+#boot .lnk{display:block}
+.msg{margin-top:10px;min-height:20px;color:var(--cv-fg);font-size:14px;overflow-wrap:anywhere}
+.code{margin:6px 0 4px;font:500 44px var(--serif);letter-spacing:.2em;font-variant-numeric:tabular-nums}
+.wait{display:flex;align-items:center;justify-content:center;gap:8px;margin:10px 0 6px;font-size:13px;color:var(--sub)}
+.spin{flex:none;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#foot{max-width:340px;margin:0 auto;padding:30px 20px calc(20px + env(safe-area-inset-bottom));text-align:center}
+.lo{min-height:44px;border:1px solid var(--line);background:var(--surf);color:var(--sub);border-radius:10px;padding:0 16px;font:12px var(--sans)}
+#lsys{margin-top:14px;font-size:13px;color:var(--sub);display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px}
+#lsys .note{color:var(--cv-fg)}
+
+/* ---- list shell ---- */
+#list{padding-bottom:calc(76px + env(safe-area-inset-bottom));overflow-x:hidden}
+.hd{display:flex;align-items:flex-start;justify-content:space-between;padding:calc(14px + env(safe-area-inset-top)) 20px 0}
+.ttl{margin:0;font:500 30px/1.15 var(--serif);letter-spacing:-.01em}
+.mn{flex:none;width:44px;height:44px;margin:-6px -10px 0 0;border:0;background:none;color:var(--sub);font-size:24px;line-height:1;border-radius:12px}
+.mn:active{background:var(--hover)}
+.meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:4px 20px 0;font-size:13px;color:var(--sub)}
+.meta .stale{color:var(--cv-fg);font-weight:600}
+.pc::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--okc);margin-right:5px;vertical-align:1px}
+.pc.bad::before{background:var(--cv-solid)}.pc.off::before{background:var(--boxc)}
+.rq{display:inline-flex;align-items:center;min-height:44px;margin:0 0 0 auto;border:1px solid var(--line);background:var(--surf);color:var(--ink);border-radius:999px;padding:0 16px;font:13px var(--sans)}
+.rq:disabled{opacity:.5}
+.nline{padding:2px 20px 0;font-size:13px;color:var(--sub);overflow-wrap:anywhere}
+.nline:empty,.bnr:empty{display:none}
+.bnr{display:flex;align-items:center;gap:10px;margin:8px 20px 0;padding:8px 12px;border-radius:10px;background:var(--co-bg);color:var(--co-fg);font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.bnr button{flex:none;min-height:44px;margin:-8px -6px -8px 0;border:1px solid currentColor;background:none;color:inherit;border-radius:999px;padding:0 14px;font:600 13px var(--sans)}
+.tb{position:fixed;left:0;right:0;bottom:0;z-index:6;display:flex;background:var(--bg);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+.tb button{position:relative;flex:1;height:56px;border:0;background:none;color:var(--sub);font:500 14px var(--sans)}
+.tb button.on{color:var(--acc);font-weight:700}
+.tb .ct{display:inline-block;min-width:18px;height:18px;margin-left:6px;padding:0 5px;border-radius:9px;background:var(--cv-solid);color:#fff;font:700 11px/18px var(--sans);vertical-align:1px}
+.tb .ct:empty{display:none}
+
+/* ---- priority tab ---- */
+.pg{display:flex;align-items:center;gap:10px;padding:10px 20px 2px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+.pgb{flex:1;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.pgb span{display:block;height:100%;background:var(--acc)}
+.gh{display:flex;align-items:center;gap:8px;padding:16px 20px 4px;font:600 12px var(--sans);letter-spacing:.02em;color:var(--sub)}
+.gh i{width:10px;height:10px;border-radius:3px;background:var(--co-fg)}
+.gh.g1 i{background:var(--cv-solid)}.gh.g2 i{background:var(--cn-fg)}.gh.g3 i{background:var(--cb-fg)}.gh.g4 i{background:var(--ca-fg)}.gh.g5 i{background:var(--ce-fg)}.gh.g6 i{background:var(--co-fg)}
+.ck{display:flex;align-items:center;gap:12px;min-height:54px;padding:0 6px 0 20px;border-bottom:1px solid var(--line2);cursor:pointer;user-select:none;-webkit-user-select:none}
+.ck:active,.pr:active{background:var(--hover)}
+.cbx{flex:none;width:22px;height:22px;border:1.6px solid var(--boxc);border-radius:6px;display:flex;align-items:center;justify-content:center}
+.ck.done .cbx{background:var(--acc);border-color:var(--acc)}
+.ck.done .cbx::after{content:"";width:35%;height:60%;border:solid #fff;border-width:0 2.2px 2.2px 0;transform:translateY(-12%) rotate(45deg)}
+.bed{font:600 17px var(--serif);font-variant-numeric:tabular-nums;min-width:30px}
+.nm{font-weight:500;white-space:nowrap}
+.ck .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ck .chip{min-width:0;white-space:normal;overflow-wrap:anywhere}
+.pr .r1{flex-wrap:wrap}
+.sp{flex:1}
+.ck.done .bed,.ck.done .nm{color:var(--sub);text-decoration:line-through;text-decoration-thickness:1px}
+.ck.done .chip{opacity:.45}
+.go{flex:none;width:44px;height:44px;border:0;background:none;color:var(--sub);font-size:22px;border-radius:10px}
+.go:active{background:var(--hover)}
+.donehd{padding:18px 20px 6px;font-size:13px;color:var(--sub)}
+.empty{padding:48px 20px;text-align:center;color:var(--sub)}
+.empty small{display:block;margin-top:6px;font-size:12px}
+.chip{display:inline-block;padding:2px 8px;border-radius:7px;font:600 14px var(--serif);font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip.g1{background:var(--cv-bg);color:var(--cv-fg)}.chip.g2{background:var(--cn-bg);color:var(--cn-fg)}.chip.g3{background:var(--cb-bg);color:var(--cb-fg)}.chip.g4{background:var(--ca-bg);color:var(--ca-fg)}.chip.g5{background:var(--ce-bg);color:var(--ce-fg)}.chip.g6{background:var(--co-bg);color:var(--co-fg)}
+.tag{display:inline-block;padding:0 6px;border-radius:5px;border:1px solid currentColor;font:700 10.5px/17px var(--sans);letter-spacing:.05em}
+.t-CRIT{color:var(--cv-solid)}.t-NEW{color:var(--newc)}.t-DNR{color:var(--sub)}.t-EOL{color:var(--eolc)}
+
+/* ---- all tab ---- */
+.seg{display:flex;margin:10px 20px 6px;padding:3px;border-radius:11px;background:var(--seg)}
+.seg button{flex:1;min-height:44px;border:0;background:none;color:var(--ink);padding:0;border-radius:8px;font:500 14px var(--sans)}
+.seg button.on{background:var(--surf);box-shadow:0 1px 3px #0002}
+#q{display:block;width:calc(100% - 40px);margin:4px 20px 6px;padding:10px 12px;border:0;border-radius:10px;background:var(--seg);color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
+.sec{padding:14px 20px 4px;font:600 12px var(--sans);letter-spacing:.06em;color:var(--sub)}
+.pr{padding:12px 20px;border-bottom:1px solid var(--line2);cursor:pointer}
+.pr .r1{display:flex;align-items:center;gap:8px}
+.pr .r1 .bed{font-size:19px}
+.pr .id{font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
+.pr .r2{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;align-items:center}
+.pr .mild{font-size:12.5px;color:var(--sub)}
+
+/* ---- menu sheet, confirm dialog, toast ---- */
+.ov{position:fixed;inset:0;z-index:20;display:none;background:#0006;align-items:flex-end;justify-content:center}
+.ov.on{display:flex}
+.sheet{width:100%;max-width:480px;background:var(--bg);border-radius:18px 18px 0 0;padding:8px 12px calc(14px + env(safe-area-inset-bottom))}
+.sheet button{display:block;width:100%;min-height:52px;border:0;border-bottom:1px solid var(--line2);background:none;color:var(--ink);font:16px var(--sans);text-align:left;padding:0 8px}
+.sheet button.danger{color:var(--cv-fg)}
+.sheet .ver{padding:14px 8px 4px;font-size:13px;color:var(--sub)}
+#dlg{align-items:center;padding:0 24px}
+.dbox{width:100%;max-width:340px;background:var(--bg);border-radius:16px;padding:20px 20px 12px}
+.dbox p{margin:0 0 16px;font-size:15px;overflow-wrap:anywhere;white-space:pre-wrap;max-height:60vh;overflow-y:auto}
+.dbox .row2{display:flex;gap:10px}
+.dbox button{flex:1;min-height:46px;border:1px solid var(--line);border-radius:12px;background:var(--surf);color:var(--ink);font:16px var(--sans)}
+.dbox button.ok{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#toast{position:fixed;left:50%;bottom:calc(68px + env(safe-area-inset-bottom));z-index:30;transform:translateX(-50%);max-width:86vw;padding:10px 16px;border-radius:12px;background:var(--ink);color:var(--bg);font-size:14px;pointer-events:none;display:none;text-align:center}
+#toast.on{display:block}
+
+/* ---- patient page ---- */
+#detail{display:none;position:fixed;inset:0;background:var(--bg);overflow-y:auto;overflow-x:hidden;z-index:10;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+.nav{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;padding:calc(4px + env(safe-area-inset-top)) 8px 6px;background:var(--bg);border-bottom:1px solid var(--line2)}
+.nav button{border:0;background:none;color:var(--acc);font:500 16px var(--sans);padding:8px 10px;min-height:44px}
+.nav .pos{padding-right:12px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+.body{max-width:640px;margin:0 auto;padding-bottom:calc(24px + env(safe-area-inset-bottom));overflow-x:hidden}
+.dh{padding:14px 20px 4px}.dh .ttl .b{margin-right:10px;font-variant-numeric:tabular-nums}
+.props{margin:10px 20px 4px;display:grid;grid-template-columns:76px 1fr;gap:6px 10px;font-size:14px}
+.props dt{color:var(--sub)}.props dd{margin:0;font-variant-numeric:tabular-nums}
+.blk{margin:14px 20px 0;padding-top:12px;border-top:1px solid var(--line)}
+.blk h3{margin:0 0 8px;font:600 13px var(--sans);color:var(--sub);letter-spacing:.03em}
+.pk{padding-left:0;min-height:46px;border-bottom:0}
+.vs{width:100%;height:auto;display:block;cursor:pointer}
+.vs .band{fill:var(--band)}
+.vs .ln{fill:none;stroke:var(--ink);stroke-opacity:.55;stroke-width:1.5;stroke-linejoin:round}
+.vs .bp{stroke:var(--ink);stroke-opacity:.5;stroke-width:3;stroke-linecap:round}
+.vs .dot{fill:var(--ink)}.vs .dot.gv{fill:var(--cv-solid)}
+.vs .sl{fill:var(--sub);font:600 12px var(--sans);letter-spacing:.04em}
+.vs .sv{fill:var(--ink);font:600 21px var(--serif)}.vs .sv.gv{fill:var(--cv-fg)}
+.vs .ax{fill:var(--sub);font:12px var(--sans)}
+.vs .gl{stroke:var(--line);stroke-width:1}
+.vs .cur{stroke:var(--acc);stroke-width:1.2}
+.rd{min-height:20px;margin-top:4px;font-size:13px;color:var(--sub);font-variant-numeric:tabular-nums}
+.lg{display:grid;gap:6px;margin-bottom:10px}
+.lg.c4{grid-template-columns:repeat(4,1fr)}.lg.c3{grid-template-columns:repeat(3,1fr)}
+.lc{padding:6px 8px;border-radius:8px;background:var(--surf);min-width:0}
+.lc .l{font-size:11.5px;color:var(--sub)}.lc .l small{font-size:11px}
+.lc .v{font:500 19px var(--serif);font-variant-numeric:tabular-nums;color:var(--sub);overflow-wrap:anywhere}
+.lc.mild .v{color:var(--ink);font-weight:700}
+.lc.pv{background:var(--cv-bg)}.lc.pn{background:var(--cn-bg)}.lc.po{background:var(--co-bg)}.lc.pb{background:var(--cb-bg)}.lc.pa{background:var(--ca-bg)}.lc.pe{background:var(--ce-bg)}
+.lc.pv .v,.lc.pv .l{color:var(--cv-fg);font-weight:700}
+.lc.pn .v,.lc.pn .l{color:var(--cn-fg);font-weight:700}
+.lc.po .v,.lc.po .l{color:var(--co-fg);font-weight:700}
+.lc.pb .v,.lc.pb .l{color:var(--cb-fg);font-weight:700}.lc.pa .v,.lc.pa .l{color:var(--ca-fg);font-weight:700}.lc.pe .v,.lc.pe .l{color:var(--ce-fg);font-weight:700}
+.sub2{margin:4px 0 6px;font-size:12px;color:var(--sub)}
+details.tg{margin:0 20px;border-top:1px solid var(--line)}
+details.tg summary{display:flex;align-items:center;gap:8px;min-height:44px;list-style:none;font:600 14px var(--sans);cursor:pointer}
+details.tg summary::-webkit-details-marker{display:none}
+details.tg summary::before{content:"▸";color:var(--sub);font-size:12px;transition:transform .15s}
+details.tg[open] summary::before{transform:rotate(90deg)}
+details.tg summary small{margin-left:auto;font-weight:400;color:var(--sub)}
+details.tg .in{padding:0 0 12px 20px;font-size:14.5px}
+details.tg ul{margin:0;padding-left:16px}details.tg li{margin:3px 0}
+.row{margin:2px 0}.row.k{margin-top:6px;font-weight:700}
+.mg{display:grid;grid-template-columns:fit-content(46%) 1fr;gap:5px 14px;margin:3px 0 6px}
+.mg .st{font-weight:600;overflow-wrap:anywhere}
+.memo{white-space:pre-wrap;font-size:14px;overflow-wrap:anywhere}
+.pn2{display:flex;gap:10px;padding:20px 20px 12px}
+.pn2 button{flex:1;height:48px;border:1px solid var(--line);border-radius:12px;background:var(--surf);color:var(--ink);font:500 15px var(--sans)}
+.pn2 button:disabled{opacity:.35}
+
+/* ---- v7: pharmacy / culture boxes, swipe hint, 待辦 tab, notepad ---- */
+.cbox{margin:4px 0 10px;padding:8px 10px;border-radius:10px;background:var(--surf);border:1px solid var(--line2)}
+.cbt{display:flex;align-items:center;gap:8px;margin:0 0 6px;font:600 13px var(--sans);color:var(--ink)}
+.cbt small{margin-left:auto;font-weight:400;color:var(--sub)}
+.dl{margin:0;padding-left:18px}.dl li{margin:4px 0;overflow-wrap:anywhere}
+.dl .sub{font-size:12.5px}
+.cbox .mg{grid-template-columns:fit-content(40%) 1fr}
+.it{overflow-wrap:anywhere}
+.pchips{display:flex;flex-wrap:wrap;gap:4px;min-width:0;align-items:center}
+.swh{margin:8px 20px 0;font-size:12px;color:var(--sub)}
+.tdo{padding:12px 20px;border-bottom:1px solid var(--line2);cursor:pointer}
+.tdo .r1{display:flex;align-items:center;gap:8px}
+.tdo .r1 .bed{font-size:19px}
+.tdo .id{font-size:12px;color:var(--sub)}
+.tdo .vs2{margin:2px 0 4px;font-size:12.5px;color:var(--sub)}
+.tdo ul{margin:0;padding-left:18px;font-size:14px}
+#np{display:none;position:fixed;inset:0;background:var(--bg);overflow-y:auto;overflow-x:hidden;z-index:11;-webkit-overflow-scrolling:touch}
+#np .nav button{border:0;background:none;color:var(--acc);font:500 16px var(--sans);padding:8px 10px;min-height:44px}
+.npf{display:flex;gap:8px;margin:6px 0 8px}
+.npf input{flex:1;min-width:0;height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--surf);color:var(--ink);font:16px var(--sans);-webkit-appearance:none}
+.npf button{flex:none;height:44px;padding:0 16px;border:0;border-radius:10px;background:var(--ink);color:var(--bg);font:500 15px var(--sans)}
+.cl{list-style:none;margin:0;padding:0}
+.cl li{display:flex;align-items:center;gap:10px;min-height:44px;border-bottom:1px solid var(--line2)}
+.cl .cbx{cursor:pointer}
+.cl li.done .cbx{background:var(--acc);border-color:var(--acc)}
+.cl li.done .cbx::after{content:"";width:35%;height:60%;border:solid #fff;border-width:0 2.2px 2.2px 0;transform:translateY(-12%) rotate(45deg)}
+.cl li.done .nt{color:var(--sub);text-decoration:line-through}
+.cl .nt{flex:1;min-width:0;overflow-wrap:anywhere}
+.nd{flex:none;width:40px;height:40px;border:0;background:none;color:var(--sub);font-size:20px}
+.rec{width:100%;height:50px;margin-top:4px;border:1px solid var(--line);border-radius:12px;background:var(--surf);color:var(--cv-fg);font:500 15px var(--sans)}
+.al{list-style:none;margin:8px 0 0;padding:0}
+.al li{display:flex;align-items:center;gap:8px;min-height:44px}
+.pl{flex:1;min-width:0;height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--surf);color:var(--ink);font:15px var(--sans);text-align:left}
+#toast button{pointer-events:auto;margin-left:10px;padding:2px 12px;border:1px solid currentColor;border-radius:999px;background:none;color:inherit;font:600 13px var(--sans)}
+
+/* ---- v11: softer and card-based (rounder corners, light borders, cards instead of divider lines) ---- */
+:root{--r:16px;--r2:12px}
+.ck,.pr,.tdo{margin:0 14px 10px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf);box-shadow:0 1px 2px #1f1e1d0d}
+.ck{padding:0 4px 0 14px}
+.pr,.tdo{padding:12px 14px}
+.ck:active,.pr:active,.tdo:active{background:var(--hover)}
+.gh{padding:16px 18px 8px}.sec{padding:14px 18px 6px}.donehd{padding:18px 18px 8px}
+.pg{padding:10px 18px 6px}
+.tb{border-top-color:var(--line2)}
+.nav{border-bottom-color:transparent}
+.seg{margin:10px 14px 8px;border-radius:14px}.seg button{border-radius:11px}
+#q{width:calc(100% - 28px);margin:4px 14px 8px;border-radius:14px}
+.bnr{margin:8px 14px 0;border-radius:14px}
+.chip{border-radius:9px}.tag{border-radius:7px}
+.dh{padding:14px 18px 4px}
+.props{grid-template-columns:104px 1fr;margin:10px 14px 4px;padding:12px 14px;background:var(--surf);border:1px solid var(--line2);border-radius:var(--r)}
+.swh{margin:8px 18px 0}
+.blk{margin:12px 14px 0;padding:14px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf)}
+.blk .cbox,.blk .lc{background:var(--bg)}
+.blk .lc.pv{background:var(--cv-bg)}.blk .lc.pn{background:var(--cn-bg)}.blk .lc.po{background:var(--co-bg)}.blk .lc.pb{background:var(--cb-bg)}.blk .lc.pa{background:var(--ca-bg)}.blk .lc.pe{background:var(--ce-bg)}
+.cbox{border-radius:var(--r2)}
+.lc{border-radius:10px}
+details.tg{margin:12px 14px 0;padding:0 14px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf)}
+details.tg .in{padding:0 0 12px 8px}
+.pn2{padding:20px 14px 12px}.pn2 button,.npf input,.npf button,.rec,.pl,.dbox button,.pane input{border-radius:var(--r2)}
+.pane button{border-radius:16px}
+.sheet{border-radius:24px 24px 0 0}.dbox{border-radius:22px}
+.cl li{margin:0 0 8px;padding:0 6px 0 12px;border:1px solid var(--line2);border-radius:var(--r2);background:var(--surf)}
+.rq,.lo{border-color:var(--line2)}
+
+/* ---- v12: Tinder swipe label, Notes-style checklist, bottom record bar, print sheet ---- */
+.swl{position:fixed;top:30%;left:50%;z-index:40;padding:8px 22px;border:3px solid currentColor;border-radius:14px;font:700 26px var(--serif);letter-spacing:.08em;opacity:0;pointer-events:none;transform:translateX(-50%)}
+.swl.on{opacity:.8}.swl.l{color:var(--acc);transform:translateX(-50%) rotate(-8deg)}.swl.r{color:var(--okc);transform:translateX(-50%) rotate(8deg)}.swl.fire{opacity:1}
+/* v20: swipe card stays opaque over a solid backdrop; stamp never wraps */
+.swl{white-space:nowrap;background:var(--bg)}
+#swbg{display:none;position:fixed;inset:0;z-index:9;background:var(--band)}
+.spx{display:block;width:100%;box-sizing:border-box;min-height:96px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--surf);color:var(--ink);font:15px/1.5 var(--sans);resize:vertical}
+.spx:focus{outline:none;border-color:var(--acc)}
+#detail.dragging{border-radius:22px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+/* ---- v13: 優先 list less crowded: smaller type, one-line chips, tighter rows ---- */
+.pr{padding:9px 12px}
+.pr .r1{gap:6px}
+.pr .r1 .bed{font-size:16px}
+.pr .id{font-size:11px}
+.pr .r2{gap:4px;margin-top:4px}
+.pr .chip{font-size:12px;padding:1px 6px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.5}
+.pr .tag{font-size:9px;line-height:15px;padding:0 4px}
+.pr .mild{font-size:11px}
+.pr .r1 .nm{font-size:14px}
+/* 優先 rows (.ck): row 1 = checkbox · bed · name · arrow; row 2 = chips under the name, one line each */
+/* 優先 rows: [✓] | bed · name · chart · attending (fixed column) | chips (vitals first, then colour blocks) | › */
+.ck{display:grid;grid-template-columns:auto 104px minmax(0,1fr) auto;column-gap:10px;align-items:center;padding:8px 4px 8px 12px}
+.ck .cbx{grid-column:1;grid-row:1;align-self:center}
+.ck .idc{grid-column:2;grid-row:1;display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.ck .bed{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ck .nm{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ck .pmeta{font-size:10.5px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.ck .pmeta+.pmeta{margin-top:1px}
+.ck .pchips{grid-column:3;grid-row:1;display:flex;flex-wrap:wrap;align-content:center;gap:4px;min-width:0}
+.ck .go{grid-column:4;grid-row:1}
+.ck .pchips .chip{font-size:12px;padding:1px 6px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.5}
+#npp{margin-left:auto;min-height:40px;padding:0 14px!important;border:1px solid var(--line)!important;border-radius:999px;background:var(--surf)!important;color:var(--ink)!important;font:500 13px var(--sans)!important}
+#npd .cl li{margin:0;padding:0 4px;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:none;box-shadow:none;min-height:46px}
+#npd .cl .cbx{border-radius:50%}
+.ni{flex:1;min-width:0;height:44px;padding:0;border:0;background:none;color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
+.cl li.done .ni{color:var(--sub);text-decoration:line-through}
+.cl li.new .cbx{opacity:.3}
+#npbar{position:sticky;bottom:0;z-index:4;padding:8px 14px calc(8px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line)}
+#npbar .chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
+.ach{display:flex;flex:none;align-items:center;border:1px solid var(--line);border-radius:999px;background:var(--surf)}
+.ach .pl{flex:none;height:36px;padding:0 4px 0 12px;border:0;background:none;font:13px var(--sans)}
+.ach .nd{width:32px;height:36px;font-size:16px}
+#npbar .rec{height:44px;margin:0}
+.rec.on{background:var(--cv-bg);border-color:var(--cv-solid)}
+.tdh{display:flex;align-items:center;justify-content:space-between;padding:6px 20px 8px;font-size:13px;color:var(--sub)}
+.tdh button{min-height:40px;padding:0 16px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--ink);font:500 13px var(--sans)}
+#printdoc{display:none}
+@media print{
+ html,body{background:#fff!important}
+ body>*:not(#printdoc){display:none!important}
+ #printdoc{display:block!important;color:#000;font:12pt/1.5 var(--sans)}
+ #printdoc h1{margin:0 0 10pt;font:600 16pt var(--sans)}
+ #printdoc section{margin:0 0 12pt;break-inside:avoid}
+ #printdoc .ph{display:flex;gap:8pt;align-items:baseline;padding-bottom:3pt;border-bottom:1pt solid #000;font-size:13pt}
+ #printdoc .ph span{margin-left:auto;font-size:11pt}
+ #printdoc ul{margin:4pt 0 0;padding:0;list-style:none}
+ #printdoc li{display:flex;gap:6pt;padding:2pt 0}
+ #printdoc li i{font-style:normal}#printdoc li span{flex:1}#printdoc li small{color:#555}
+ #printdoc li.d span{text-decoration:line-through;color:#555}
+}
+/* ---- v22: drug boxes as aligned grid rows (藥名 left, 劑量 / 途徑 / 頻次 / 天數 in fixed columns) ---- */
+.dgrid{font-variant-numeric:tabular-nums}
+.dgrid .dr{display:grid;grid-template-columns:minmax(0,1fr) 62px 40px 42px 36px;column-gap:6px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--line2);font-size:13.5px}
+.dgrid .dr:last-child{border-bottom:0}
+.dgrid .dn{text-align:left;overflow-wrap:anywhere;color:var(--ink)}
+.dgrid .dq,.dgrid .dfq,.dgrid .dd{text-align:right;color:var(--sub);white-space:nowrap}
+.dgrid .dt{text-align:center;color:var(--sub);white-space:nowrap}
+.dgrid .dh2{font-size:11.5px;color:var(--sub);padding:0 0 3px}
+.dgrid .dh2 .dn{color:var(--sub)}
+/* ---- v26: 輸出 Doc buttons on all 3 tabs, toggle-list group headers, prev/next in the patient top bar ---- */
+.docb{min-height:36px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--ink);font:500 13px var(--sans);white-space:nowrap}
+.pg .docb{margin-left:auto;flex:none}
+.tg{cursor:pointer;-webkit-user-select:none;user-select:none}
+.tg .chev{margin-left:auto;font-size:13px;color:var(--sub)}
+.donehd.tg{display:flex;align-items:center}
+.nav .nvr{display:flex;align-items:center;gap:0}
+.nav .nvr button{padding:8px 8px;font-size:15px;white-space:nowrap}
+.nav .nvr button:disabled{opacity:.35}
+.nav .nvr .pos{padding-right:4px}
+/* ---- v25: 待辦 sort bar + group headers ---- */
+.tds{display:flex;gap:6px;padding:0 20px 8px}
+.tds button{flex:1;min-height:34px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--sub);font:500 13px var(--sans)}
+.tds button.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:700}
+.tdg{margin:6px 20px 6px;font:600 12.5px var(--sans);color:var(--sub)}
+/* ---- v23: culture rows — right (item) column wider; long results take a full-width row and wrap (no overflow / huge gaps) ---- */
+.cbox .mg{grid-template-columns:fit-content(30%) minmax(0,1fr);align-items:start;gap:4px 12px}
+.cbox .mg .st{min-width:0}
+.cbox .mg .st .chip{white-space:normal;overflow-wrap:anywhere;max-width:100%;display:inline-block;line-height:1.35}
+.cbox .mg .st.wide{grid-column:1 / -1}
+.cbox .mg .it{min-height:0}
+/* ---- v31: iOS-style swipe-to-delete row for 待辦 (red 刪除 layer under a row that drags over it) ---- */
+.tdw{position:relative;overflow:hidden;margin:0 14px 10px;border-radius:var(--r)}
+.tdw .tdo{position:relative;z-index:1;margin:0;will-change:transform;touch-action:pan-y}
+/* ---- v33: long-press up/down navigation hint on the patient page; no text selection while long-pressing ---- */
+#detail{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.navh{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom));z-index:45;transform:translateX(-50%);padding:8px 16px;border-radius:999px;background:var(--ink);color:var(--bg);font:600 14px var(--sans);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s}
+.navh.on{opacity:.92}
+.tdl{position:absolute;top:0;right:0;bottom:0;width:88px;display:flex;align-items:center;justify-content:center;background:var(--cv-solid);color:#fff;font:600 15px var(--sans);cursor:pointer}
+/* ---- v35: 今日 summary at the top of 優先 (還要做 / 今天完成 with times) ---- */
+.today{margin:0 14px 12px;padding:12px 14px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf)}
+.tdy-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font:600 15px var(--sans);margin-bottom:4px}
+.tdy-h small{font-weight:400;color:var(--sub);font-size:12.5px}
+.tdy-r{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line2);font-size:14px;cursor:pointer}
+.tdy-r b{font-weight:600;white-space:nowrap}
+.tdy-r span{flex:1;min-width:0;overflow-wrap:anywhere}
+.tdy-r small{color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+.tdy-r.done span{color:var(--sub)}
+.tdy-sub{margin-top:10px;font-size:12.5px;color:var(--sub)}
+.tdy-e{padding:6px 0;font-size:13.5px;color:var(--sub)}
+</style></head><body>
+<div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
+
+<div id="setup" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2 data-t="{duty}">Notes</h2><p class="sub">首次使用</p>
+<form id="sf" autocomplete="off">
+<input id="su" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+<input id="sn" type="text" placeholder="顯示姓名（給管理者核對）" maxlength="20" required>
+<button id="sb" type="submit">啟用 Face ID</button></form>
+<button id="swpw" type="button" class="lnk">使用通關句</button>
+<form id="pf" autocomplete="on" style="display:none">
+<input id="pu" name="username" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+<input id="pp" name="password" type="password" placeholder="通關句（5 個英文字）" autocomplete="current-password" autocapitalize="off" required>
+<input id="pk" type="text" placeholder="存取碼" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+<button id="pb" type="submit">開啟</button></form>
+<div id="sm" class="msg"></div>
+<button id="sx" type="button" style="display:none">再按一次 Face ID 完成登記</button></div>
+
+<div id="pending" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2>等待核可</h2>
+<p class="sub">請在院內電腦執行 approve，核對此 6 碼</p>
+<div id="pcode" class="code"></div><div id="pacct" class="sub"></div>
+<div class="wait"><i class="spin"></i><span id="pm"></span></div>
+<button id="pfin" type="button" style="display:none">完成啟用（Face ID）</button>
+<button id="pchk" type="button" class="ghost">立即檢查</button>
+<button id="pcan" type="button" class="ghost">取消登記</button></div>
+
+<div id="login" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2 data-t="{duty}">Notes</h2><p class="sub" id="lsub"></p>
+<div id="lx"><button id="fx" type="button">以 Face ID 開啟</button></div>
+<form id="lf" autocomplete="on">
+<input id="lu" name="username" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+<input id="lp" name="password" type="password" placeholder="通關句（5 個英文字）" autocomplete="current-password" autocapitalize="off" required>
+<button id="lb" type="submit">開啟</button></form>
+<div id="lm" class="msg"></div>
+<div id="lsys"></div></div>
+
+<div id="list" style="display:none">
+  <div class="hd"><h1 class="ttl" id="ttl">優先</h1><button id="mn" class="mn" type="button" aria-label="選單">⋯</button></div>
+  <div id="meta" class="meta"></div>
+  <div id="nline" class="nline"></div>
+  <div id="banner" class="bnr"></div>
+  <div id="pri"></div>
+  <div id="all" style="display:none">
+    <div class="tdh"><span data-t="{zi}＋{zo} 全部{pt}">A＋B 全部item</span><button class="docb" data-doc="all" type="button">輸出 Doc</button></div>
+    <div class="seg" id="zone"></div>
+    <input type="search" id="q" placeholder="搜尋 ID-2 / ID-1 / 姓名" data-tp="搜尋 {bed} / {chart} / 姓名" autocomplete="off">
+    <div id="cards"></div>
+  </div>
+  <div class="tb"><button type="button" data-tab="pri">優先</button><button type="button" data-tab="all">全部</button></div>
+</div>
+<div id="detail">
+  <div class="nav"><button id="back" type="button">‹ 優先</button><div class="nvr"><span class="pos" id="dt"></span><button id="prev" type="button">‹ 上一位</button><button id="next" type="button">下一位 ›</button></div></div>
+  <div class="body" id="db"></div>
+</div>
+<div id="np"><div class="body" id="npd"></div><div id="npbar"></div></div>
+<div id="foot" style="display:none"><button id="clr" type="button" class="lo">清除病患資料</button></div>
+<div id="menu" class="ov"><div class="sheet"><button type="button" data-act="help">優先門檻</button><button type="button" data-act="import" data-t="匯入{sp}">匯入Memo</button><input type="file" id="impf" accept=".txt,.csv,.tsv,text/plain,text/csv,text/tab-separated-values" hidden><button type="button" data-act="lock">鎖定</button><button type="button" class="danger" data-act="clear">清除本機資料</button><div class="ver" id="ver"></div></div></div>
+<div id="dlg" class="ov"><div class="dbox"><p id="dtx"></p><div class="row2"><button type="button" id="dno">取消</button><button type="button" id="dok" class="ok">確定</button></div></div></div>
+<div id="toast"></div>
+<div id="swbg"></div>
+<div id="navh" class="navh"></div>
+<div id="swl" class="swl"></div>
+<div id="printdoc"></div>
+<script src="config.js"></script>
+<script src="crypto.js"></script>
+<script src="logic.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body></html>
