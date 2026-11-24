@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v54';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v55';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -444,8 +444,14 @@ function renderDetail(i, from) {
   const micro = p.micro && typeof p.micro === 'object' ? Object.entries(p.micro) : [];
   const nMicro = micro.reduce((n, e) => n + objs(e[1]).length, 0);
   /* culture results in one box per kind (細菌 / 病毒 / ...): left = status, right = the full HIS item name */
+  /* one culture per row: left = status, right = item. Pending = 執行中; reported = ✅ 完成 (a positive one is highlighted) and a tap opens the result text */
+  const culRow = r => {
+    const it = `<span class="it">${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`, t = String(r.t == null ? '' : r.t);
+    if (!t || t === '執行中') return `<div class="mr"><span class="st">執行中</span>${it}</div>`;
+    return `<details class="mr"><summary><span class="st">${r.pos ? '<span class="chip g3">✅ 完成</span>' : '✅ 完成'}</span>${it}</summary><div class="mx">${esc(t)}</div></details>`;
+  };
   const cbox = (title, n, inner) => inner ? `<div class="cbox"><div class="cbt">${esc(title)}<small>${n}</small></div>${inner}</div>` : '';
-  const cx = micro.filter(([, rows]) => objs(rows).length).map(([k, rows]) => cbox(k, objs(rows).length, `<div class="mg">${objs(rows).map(r => `<span class="st${String(r.t || '').length > 22 ? ' wide' : ''}">${r.pos ? `<span class="chip g3">${esc(r.t)}</span>` : esc(r.t)}</span><span class="it">${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`).join('')}</div>`)).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
+  const cx = micro.filter(([, rows]) => objs(rows).length).map(([k, rows]) => cbox(k, objs(rows).length, `<div class="cm">${objs(rows).map(culRow).join('')}</div>`)).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
   const today = Array.isArray(p.today) ? p.today : [];
   /* drugs: the flagged ones (meds) and the other active drugs (others) in one list, boxed by pharmacy category */
   const drugs = objs(p.meds).concat(objs(p.others)), PHARM = ['抗生素', '止痛藥', '抗凝血·抗血小板', '抗癌藥', '類固醇', '升壓劑', '腸胃藥', '其他'];

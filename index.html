@@ -382,6 +382,20 @@ details.tg .in{padding:0 0 12px 8px}
 .lsheet .lm{padding:6px 0;border-top:1px solid var(--line2)}
 .lsheet .lt{display:flex;justify-content:space-between;font-size:14px;font-variant-numeric:tabular-nums}
 .lsheet .vs{cursor:default}
+
+/* ---- v54: culture rows (left status, right item; a reported one opens its result) ---- */
+.cm{margin:3px 0 6px}
+.cm .mr{display:grid;grid-template-columns:6.2em minmax(0,1fr);gap:4px 12px;align-items:start;padding:5px 0}
+.cm details.mr{display:block;padding:0}
+.cm details.mr>summary{display:grid;grid-template-columns:6.2em minmax(0,1fr) 14px;gap:4px 12px;align-items:start;min-height:0;padding:5px 0;list-style:none;cursor:pointer;font:inherit}
+.cm details.mr>summary::before{content:none}
+.cm details.mr>summary::-webkit-details-marker{display:none}
+.cm details.mr>summary::after{content:'▸';color:var(--sub);font-size:12px;line-height:1.6}
+.cm details.mr[open]>summary::after{content:'▾'}
+.cm .st{font-weight:600;min-width:0;white-space:nowrap}
+.cm .st .chip{white-space:nowrap}
+.cm .it{overflow-wrap:anywhere}
+.cm .mx{margin:0 0 6px 0;padding:7px 10px;border-radius:8px;font-size:14px;overflow-wrap:anywhere;white-space:pre-wrap;border:1px solid var(--line2);background:var(--surf)}
 </style></head><body>
 <div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
