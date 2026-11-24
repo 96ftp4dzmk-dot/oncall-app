@@ -47,7 +47,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v53';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v54';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -78,7 +78,7 @@ function applyUi(ui) {
   document.querySelectorAll('[data-t]').forEach(e => { e.textContent = fmtU(e.dataset.t); });
   document.querySelectorAll('[data-tp]').forEach(e => { e.placeholder = fmtU(e.dataset.tp); });
 }
-const newSt = () => ({tab: 'pri', zone: U.zi, q: '', idx: [], cur: -1, from: 'pri', order: []});
+const newSt = () => ({tab: 'pri', zone: U.zi, q: '', idx: [], cur: -1, from: 'pri', order: [], dr: '', labMode: false, labSel: new Set()});
 let st = newSt();
 /* English outlined labels only (no Chinese on a patient): CRIT NEW DNR EOL; NF is expressed by the ANC chip */
 function tags(p) {
@@ -201,7 +201,11 @@ function togglePatient(pi) {
 function renderAll() {
   const q = st.q.replace(/\s+/g, '').toLowerCase();   // spaces (incl. full-width) are ignored on both sides
   $('#zone').innerHTML = [U.zi, U.zo].map(z => `<button class="${st.zone === z ? 'on' : ''}" data-z="${z}">${z} ${P.filter(p => p.zone === z).length}</button>`).join('');
-  st.idx = P.map((p, i) => i).filter(i => { const p = P[i]; return p.zone === st.zone && (!q || (p.bed + p.chart + p.name + p.dept).replace(/\s+/g, '').toLowerCase().includes(q)); });
+  const dm = new Map();                                              // attending filter: key = number (dr) or name (vs)
+  P.filter(p => p.zone === st.zone).forEach(p => { const k = String(p.dr || p.vs || ''); if (!k) return; const e = dm.get(k) || {n: String(p.vs || p.dr), c: 0}; e.c++; dm.set(k, e); });
+  if (st.dr && !dm.has(st.dr)) st.dr = '';
+  $('#docs').innerHTML = dm.size > 1 ? `<button type="button" class="${st.dr ? '' : 'on'}" data-dr="">全部</button>` + [...dm.entries()].sort((a, b) => b[1].c - a[1].c || a[1].n.localeCompare(b[1].n)).map(([k, e]) => `<button type="button" class="${st.dr === k ? 'on' : ''}" data-dr="${esc(k)}">${esc(e.n)} ${e.c}</button>`).join('') : '';
+  st.idx = P.map((p, i) => i).filter(i => { const p = P[i]; return p.zone === st.zone && (!st.dr || String(p.dr || p.vs || '') === st.dr) && (!q || (p.bed + p.chart + p.name + p.dept + (p.vs || '') + (p.dr || '')).replace(/\s+/g, '').toLowerCase().includes(q)); });
   st.idx.sort((a, b) => cmpWard(P[a], P[b]) || a - b);   // 第二 → 急診 → 第一 大樓, high ward first
   if (!st.idx.length) { $('#cards').innerHTML = `<div class="empty">沒有符合的${U.pt}</div>`; return; }
   const by = {};
@@ -319,10 +323,79 @@ function bindStrips(p) {
 /* lab grid cell: normal = grey, mildly abnormal = bold + arrow, a priority item = the group's soft colour */
 function labCell(l, it) {
   const cls = it ? 'p' + ({1: 'v', 2: 'n', 3: 'b', 4: 'a', 5: 'e', 6: 'o'}[it.g] || 'o') : l.abn ? 'mild' : '';
-  return `<div class="lc ${cls}"><div class="l">${esc(l.l)}${l.d ? ' <small>' + esc(l.d) + '</small>' : ''}</div><div class="v">${esc(labText(l))}${labArrow(l.l, l.v)}</div></div>`;
+  return `<div class="lc ${cls}${st.labSel && st.labSel.has(l.l) ? ' sel' : ''}" data-lab="${esc(l.l)}"><div class="l">${esc(l.l)}${l.d ? ' <small>' + esc(l.d) + '</small>' : ''}</div><div class="v">${esc(labText(l))}${labArrow(l.l, l.v)}</div></div>`;
 }
 /* WBC arrives per uL ("2900"); the screens show it as 2.9k like the priority chip */
 function labText(l) { const n = l.l === 'WBC' ? fin(l.v) : null; return n == null ? String(l.v) : (n / 1000).toFixed(1) + 'k'; }
+/* ---- whole-admission lab history: p.labh = {label: [t0_min, [[dt_min, value, flag?], ...]]}; minutes are UTC-naive like p.ser ---- */
+const LAB_BAND = {WBC: [4000, 11000], Hb: [12, 17], PLT: [150, 450], Cre: [0.5, 1.3], BUN: [7, 20], ALT: [0, 40], 'T-bil': [0.2, 1.2], INR: [0.8, 1.2],
+                  Na: [135, 145], K: [3.5, 5.1], Ca: [8.5, 10.5], pH: [7.35, 7.45], pCO2: [35, 45], HCO3: [22, 26], BE: [-2, 2]};
+function labSeries(p, label) {
+  const e = p && p.labh && typeof p.labh === 'object' ? p.labh[label] : null;
+  if (!Array.isArray(e) || !Array.isArray(e[1])) return [];
+  let t = fin(e[0]); if (t == null) return [];
+  const out = [];
+  e[1].forEach(r => { if (!Array.isArray(r)) return; const dt = fin(r[0]), v = fin(r[1]); if (dt == null || v == null) return; t += dt; out.push({t: t * 60000, v, f: fin(r[2]) || 0}); });
+  return out;
+}
+const labY = (label, v) => label === 'PLT' && v >= 2000 ? v / 1000 : v;        // PLT may arrive per uL or per 10^3/uL
+function labVal(label, v) {
+  if (label === 'WBC') return (v / 1000).toFixed(1) + 'k';
+  if (label === 'PLT') return Math.round(labY(label, v)) + 'k';
+  return String(Math.abs(v) >= 100 ? Math.round(v) : +v.toFixed(2));
+}
+const labFlag = f => f <= -2 ? '↓↓' : f < 0 ? '↓' : f >= 2 ? '↑↑' : f > 0 ? '↑' : '';
+/* one line chart on a shared time axis [t0, t1]: normal band, day grid with MM/DD, abnormal points in red */
+function labChartSVG(label, ser, t0, t1, big) {
+  const W = 340, H = big ? 150 : 84, L = 40, R = 334, T = 10, B = 16;
+  if (!ser.length) return '';
+  const ys = ser.map(q => labY(label, q.v)), band = LAB_BAND[label];
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pd = (hi - lo) * .12; lo -= pd; hi += pd;
+  const span = Math.max(t1 - t0, 3600e3), X = t => L + (t - t0) / span * (R - L), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  let s = `<svg class="vs" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(label)}">`;
+  if (band) { const a = Math.max(band[0], lo), b = Math.min(band[1], hi); if (b > a) s += `<rect class="band" x="${L}" y="${Y(b)}" width="${R - L}" height="${Math.max(0, Y(a) - Y(b))}"/>`; }
+  const days = span / 86400e3, step = Math.max(1, Math.ceil(days / 5)), d0 = new Date(t0); d0.setUTCHours(0, 0, 0, 0);
+  for (let t = d0.getTime(), k = 0; t <= t1; t += 86400e3, k++) {
+    if (t < t0 || k % step) continue;
+    const x = X(t), d = new Date(t);
+    s += `<line class="gl" x1="${x}" x2="${x}" y1="${T - 4}" y2="${H - B}"/><text class="ax" x="${x + 2}" y="${H - 3}">${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}</text>`;
+  }
+  s += `<text class="ax" x="0" y="${T + 8}">${esc(labVal(label, hi))}</text><text class="ax" x="0" y="${H - B}">${esc(labVal(label, lo))}</text>`;
+  if (ser.length > 1) s += `<polyline class="ln" points="${ser.map((q, i) => `${X(q.t)},${Y(ys[i])}`).join(' ')}"/>`;
+  ser.forEach((q, i) => { s += `<circle class="dot${q.f ? ' gv' : ''}" cx="${X(q.t)}" cy="${Y(ys[i])}" r="${big ? 3.2 : 2.6}"/>`; });
+  return s + '</svg>';
+}
+/* popup: one lab = chart + dated list (newest first); several = their charts side by side on one time axis */
+function openLab(labels) {
+  const p = P && st.order[st.cur] != null ? P[st.order[st.cur]] : null; if (!p) return;
+  const sers = labels.map(l => [l, labSeries(p, l)]).filter(x => x[1].length);
+  if (!sers.length) { toast('沒有歷史資料'); return; }
+  const t1 = Number(D.now), t0 = Math.min(...sers.map(x => x[1][0].t));
+  let h = `<div class="lh"><b>${sers.length === 1 ? esc(sers[0][0]) + ' · 本次住院' : '折線圖 · 本次住院'}</b><button type="button" data-labx>關閉</button></div>`;
+  if (sers.length === 1) {
+    const [l, ser] = sers[0];
+    h += labChartSVG(l, ser, t0, t1, true) + '<div class="lrs">' + ser.slice().reverse().map(q => `<div class="lr"><span>${esc(fmtT(q.t))}</span><span class="${q.f ? 'gv' : ''}">${esc(labVal(l, q.v))}</span><span class="${q.f ? 'gv' : ''}">${labFlag(q.f)}</span></div>`).join('') + '</div>';
+  } else {
+    sers.forEach(([l, ser]) => { const q = ser[ser.length - 1]; h += `<div class="lm"><div class="lt"><b>${esc(l)}</b><span class="${q.f ? 'gv' : ''}">${esc(labVal(l, q.v))}${labFlag(q.f)}</span></div>${labChartSVG(l, ser, t0, t1, false)}</div>`; });
+  }
+  $('#labb').innerHTML = h; $('#labb').scrollTop = 0; $('#lab').classList.add('on');
+}
+const closeLab = () => $('#lab').classList.remove('on');
+/* the lab card of the patient page (re-rendered alone when the chart selection changes) */
+function labCardHtml(p, i) {
+  const labs = Array.isArray(p.labs) ? p.labs : [], its = ITEMS.filter(it => it.pi === i), notes = Array.isArray(p.notes) ? p.notes : [];
+  const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };
+  const hemo = grid(['WBC', 'ANC', 'Hb', 'PLT'], 4), chem = grid(['Cre', 'BUN', 'ALT', 'T-bil', 'INR', 'Na', 'K', 'Ca', 'LDH'], 3);
+  const inf = grid(['hsCRP', 'PCT', 'Lactate'], 3), gas = grid(['pH', 'pCO2', 'pO2', 'HCO3', 'BE'], 3);
+  if (!(hemo || chem || inf || gas || notes.length)) return '';
+  const n = st.labSel.size;
+  const foot = `<div class="lcf">${st.labMode && n ? `<button type="button" class="go2" data-labgo>產出折線圖 (${n})</button>` : ''}<button type="button" class="${st.labMode ? 'on' : ''}" data-labmode aria-pressed="${st.labMode ? 'true' : 'false'}"><span class="cb2"></span>勾選產出折線圖</button></div>`;
+  return `<h3>檢驗 · 最新值（長按看本次住院）</h3>${hemo ? '<div class="sub2">Hemogram</div>' + hemo : ''}${chem ? '<div class="sub2">Chemistry</div>' + chem : ''}${inf ? '<div class="sub2">Inflammation</div>' + inf : ''}${gas ? `<div class="sub2">Blood gas${p.gv === 'V' ? ' (V)' : p.gv === 'A' ? ' (A)' : ''}</div>` + gas : ''}${notes.length ? `<div class="rd">${notes.map(esc).join(' · ')}</div>` : ''}${foot}`;
+}
+function renderLabCard() { const b = $('#labcard'), i = st.order[st.cur]; if (b && i != null) b.innerHTML = labCardHtml(P[i], i); }
+function toggleLabSel(label) { if (st.labSel.has(label)) st.labSel.delete(label); else st.labSel.add(label); renderLabCard(); }
 function fold(title, small, inner, open) {
   return inner ? `<details class="tg"${open ? ' open' : ''}><summary>${title}<small>${small == null ? '' : esc(small)}</small></summary><div class="in">${inner}</div></details>` : '';
 }
@@ -343,7 +416,7 @@ function renderDetail(i, from) {
   closeNote();   // leave the previous patient's checklist (commit + stop recording)
   const p = P[i];
   if (from) { st.from = from; st.order = from === 'pri' ? patientsInOrder(ITEMS) : st.idx.slice(); }
-  st.cur = st.order.indexOf(i); hist('#p' + i); stripSel = null;
+  st.cur = st.order.indexOf(i); hist('#p' + i); stripSel = null; st.labMode = false; st.labSel = new Set(); closeLab();
   $('#back').textContent = st.from === 'pri' ? '‹ 優先' : '‹ 全部';
   $('#dt').textContent = `${st.cur + 1} / ${st.order.length}`;
   const labs = Array.isArray(p.labs) ? p.labs : [], its = ITEMS.filter(it => it.pi === i), notes = Array.isArray(p.notes) ? p.notes : [];
@@ -366,10 +439,7 @@ function renderDetail(i, from) {
   <div class="swh">左滑加入待處理，右滑標為已完成（可復原）・長按後上拖下一位、下拖上一位</div>
   <div class="blk" id="pend"></div>
   <div class="blk"><h3>生命徵象 · 72 小時</h3><div id="vsbox"></div><div class="rd" id="read"></div></div>`;
-  const grid = (names, cols) => { const L = labs.filter(l => l && names.includes(l.l) && l.v); return L.length ? `<div class="lg c${cols}">${L.map(l => labCell(l, its.find(it => it.key === l.l))).join('')}</div>` : ''; };
-  const hemo = grid(['WBC', 'ANC', 'Hb', 'PLT'], 4), chem = grid(['Cre', 'BUN', 'ALT', 'T-bil', 'INR', 'Na', 'K', 'Ca', 'LDH'], 3);
-  if (hemo || chem || notes.length)
-    h += `<div class="blk"><h3>檢驗 · 7 天內最新</h3>${hemo ? '<div class="sub2">Hemogram</div>' + hemo : ''}${chem ? '<div class="sub2">Chemistry</div>' + chem : ''}${notes.length ? `<div class="rd">${notes.map(esc).join(' · ')}</div>` : ''}</div>`;
+  { const lc = labCardHtml(p, i); if (lc) h += `<div class="blk" id="labcard">${lc}</div>`; }
   const objs = a => Array.isArray(a) ? a.filter(x => x && typeof x === 'object') : [];     // a null entry must not break the page
   const micro = p.micro && typeof p.micro === 'object' ? Object.entries(p.micro) : [];
   const nMicro = micro.reduce((n, e) => n + objs(e[1]).length, 0);
@@ -410,7 +480,7 @@ function renderDetail(i, from) {
 }
 function go(d){const n=st.cur+d;if(n<0||n>=st.order.length)return;renderDetail(st.order[n])}
 /* back to the tab the patient was opened from, at the row that was opened; a newer payload that arrived meanwhile is applied now */
-function closeDetail(){closeNote();$('#detail').style.display='none';document.body.style.overflow='';hist('');
+function closeDetail(){closeNote();closeLab();$('#detail').style.display='none';document.body.style.overflow='';hist('');
  const from=st.from;let pi=st.order[st.cur];
  if(PENDING){const chart=(P[pi]||{}).chart,d=PENDING;PENDING=null;applyData(d);pi=P.findIndex(x=>x.chart===chart)}   // new data: find the patient again by chart number
  showTab(from);
@@ -431,7 +501,12 @@ document.addEventListener('click',e=>{
  if(!P)return;
  const t=e.target;
  const tb=t.closest('[data-tab]');if(tb){showTab(tb.dataset.tab);window.scrollTo(0,0);return}
- const z=t.closest('[data-z]');if(z){st.zone=z.dataset.z;renderAll();return}
+ const z=t.closest('[data-z]');if(z){st.zone=z.dataset.z;st.dr='';renderAll();return}
+ const dr=t.closest('[data-dr]');if(dr){st.dr=dr.dataset.dr;renderAll();return}
+ if(t.closest('[data-labx]')||t.id==='lab'){closeLab();return}
+ const lmd=t.closest('[data-labmode]');if(lmd){st.labMode=!st.labMode;if(!st.labMode)st.labSel=new Set();renderLabCard();return}
+ const lgo=t.closest('[data-labgo]');if(lgo){openLab([...st.labSel]);return}
+ const lct=t.closest('.lc[data-lab]');if(lct&&st.labMode){toggleLabSel(lct.dataset.lab);return}
  const dcb=t.closest('[data-doc]');if(dcb){exportDoc(dcb.dataset.doc);return}
  const gt=t.closest('[data-gtog]');if(gt){const k=gt.dataset.gtog==='done'?'done':+gt.dataset.gtog;if(PRI_COLL.has(k))PRI_COLL.delete(k);else PRI_COLL.add(k);renderPri();return}
  const gb=t.closest('[data-go]');if(gb){renderDetail(+gb.dataset.go,'pri');return}
@@ -442,6 +517,8 @@ document.addEventListener('click',e=>{
  if(ac){const a=ac.dataset.act;
   if(a==='lock'){closeMenu();lock()}else if(a==='import'){closeMenu();$('#impf').value='';$('#impf').click()}else if(a==='clear'){closeMenu();clearLocal()}else if(a==='help'){closeMenu();ask(helpText(),true)}else if(a==='reopen')lock();return}
  if(t.id==='menu')closeMenu()});
+document.addEventListener('contextmenu',e=>{if(e.target.closest&&e.target.closest('.lc[data-lab]'))e.preventDefault()});
+document.addEventListener('dblclick',e=>{const l=e.target.closest&&e.target.closest('.lc[data-lab]');if(l&&P&&!st.labMode)openLab([l.dataset.lab])});
 $('#q').addEventListener('input',e=>{if(!P)return;st.q=e.target.value;renderAll()});
 $('#back').onclick=closeDetail;
 /* tick rows and patient rows are plain elements: Enter / Space on a focused one acts like a tap */
@@ -1037,7 +1114,7 @@ function lock() {
   if (KEK) KEK.fill(0);
   if (AUTH) AUTH.fill(0);
   KEYS = null; KEK = null; AUTH = null; USER = null; LOGIN_KEY = null; D = null; P = null; PENDING = null;
-  applyUi(null);                                          // wording goes back to the neutral labels with the data
+  closeLab(); applyUi(null);                                          // wording goes back to the neutral labels with the data
   ITEMS = []; CHECKS = []; REQ_SENDING = false;
   NOTES = {}; UNDO = null; NOTE_I = -1; SW0 = null; clearTimeout(NOTE_T); SW_CHART = null;
   if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }   // onstop sees the new session and keeps nothing
@@ -1165,11 +1242,12 @@ function bindSwipe(chart) {
   el.addEventListener('touchstart', e => {
     clearTimeout(lpT);
     if (e.touches.length !== 1 || e.target.closest('textarea,input')) { s = null; return; }
-    const t = e.touches[0], now = Date.now();
+    const t = e.touches[0], now = Date.now(), lt = e.target.closest && e.target.closest('.lc[data-lab]');
     s = {x: t.clientX, y: t.clientY, t: now, lp: false, moved: false};
     dir = null; el.style.transition = 'none';
-    lpT = setTimeout(() => {                                    // 0.4 秒內沒移動 → 進入換人拖曳模式
+    lpT = setTimeout(() => {                                    // 0.4 秒內沒移動 → 進入換人拖曳模式（在檢驗格上改為開啟該項目的住院序列）
       if (!s || s.moved) return;
+      if (lt) { s = null; if (navigator.vibrate) navigator.vibrate(10); openLab([lt.dataset.lab]); return; }
       s.lp = true; lift(true); showNav(navText(0));
       if (navigator.vibrate) navigator.vibrate(10);
     }, LP_MS);

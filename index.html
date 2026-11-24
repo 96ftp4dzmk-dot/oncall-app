@@ -356,6 +356,32 @@ details.tg .in{padding:0 0 12px 8px}
 .tdy-r.done span{color:var(--sub)}
 .tdy-sub{margin-top:10px;font-size:12.5px;color:var(--sub)}
 .tdy-e{padding:6px 0;font-size:13.5px;color:var(--sub)}
+
+/* ---- v54: attending filter, lab long-press sheet, chart selection ---- */
+.dsel{display:flex;gap:6px;overflow-x:auto;margin:0 0 8px;padding-bottom:2px;scrollbar-width:none}
+.dsel::-webkit-scrollbar{display:none}
+.dsel:empty{display:none}
+.dsel button{flex:none;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--ink);font:13px var(--sans)}
+.dsel button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.lc[data-lab]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.lc.sel{outline:2px solid var(--acc);outline-offset:-2px}
+.lcf{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:4px}
+.lcf button{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:3px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surf);color:var(--sub);font:12px var(--sans)}
+.lcf button.on{border-color:var(--acc);color:var(--ink)}
+.lcf button.go2{background:var(--acc);border-color:var(--acc);color:#fff}
+.lcf .cb2{width:12px;height:12px;border:1.5px solid var(--sub);border-radius:3px;display:inline-block}
+.lcf button.on .cb2{background:var(--acc);border-color:var(--acc)}
+#lab{z-index:25}
+.lsheet{width:100%;max-width:480px;max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg);border-radius:18px 18px 0 0;padding:10px 14px calc(14px + env(safe-area-inset-bottom))}
+.lsheet .lh{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.lsheet .lh b{font:600 16px var(--sans)}
+.lsheet .lh button{border:0;background:none;color:var(--acc);font:500 16px var(--sans);min-height:40px;padding:0 6px}
+.lsheet .lr{display:grid;grid-template-columns:1fr auto 28px;gap:4px 12px;padding:6px 0;border-top:1px solid var(--line2);font-size:14px;font-variant-numeric:tabular-nums}
+.lsheet .lr span:nth-child(2){text-align:right}
+.lsheet .gv{color:var(--cv-fg);font-weight:700}
+.lsheet .lm{padding:6px 0;border-top:1px solid var(--line2)}
+.lsheet .lt{display:flex;justify-content:space-between;font-size:14px;font-variant-numeric:tabular-nums}
+.lsheet .vs{cursor:default}
 </style></head><body>
 <div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
@@ -399,6 +425,7 @@ details.tg .in{padding:0 0 12px 8px}
   <div id="all" style="display:none">
     <div class="tdh"><span data-t="{zi}＋{zo} 全部{pt}">A＋B 全部item</span><button class="docb" data-doc="all" type="button">輸出 Doc</button></div>
     <div class="seg" id="zone"></div>
+    <div class="dsel" id="docs"></div>
     <input type="search" id="q" placeholder="搜尋 ID-2 / ID-1 / 姓名" data-tp="搜尋 {bed} / {chart} / 姓名" autocomplete="off">
     <div id="cards"></div>
   </div>
@@ -412,6 +439,7 @@ details.tg .in{padding:0 0 12px 8px}
 <div id="foot" style="display:none"><button id="clr" type="button" class="lo">清除病患資料</button></div>
 <div id="menu" class="ov"><div class="sheet"><button type="button" data-act="help">優先門檻</button><button type="button" data-act="import" data-t="匯入{sp}">匯入Memo</button><input type="file" id="impf" accept=".txt,.csv,.tsv,text/plain,text/csv,text/tab-separated-values" hidden><button type="button" data-act="lock">鎖定</button><button type="button" class="danger" data-act="clear">清除本機資料</button><div class="ver" id="ver"></div></div></div>
 <div id="dlg" class="ov"><div class="dbox"><p id="dtx"></p><div class="row2"><button type="button" id="dno">取消</button><button type="button" id="dok" class="ok">確定</button></div></div></div>
+<div id="lab" class="ov"><div class="lsheet" id="labb"></div></div>
 <div id="toast"></div>
 <div id="swbg"></div>
 <div id="navh" class="navh"></div>
