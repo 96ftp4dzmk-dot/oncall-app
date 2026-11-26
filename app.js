@@ -25,8 +25,9 @@ if (LOCAL) {
   };
 }
 
-const dataUrl = () => LOCAL ? './data.json' : EXEC_URL + '?a=data&k=' + encodeURIComponent(REG.access);
-const statusUrl = () => LOCAL ? './status.json' : EXEC_URL + '?a=status&k=' + encodeURIComponent(REG.access);
+/* data / status: the access key goes in the POST body, never in the URL (proxy logs, history) */
+const fetchData = key => LOCAL ? getJSON('./data.json') : postJSON({a: 'data', k: key});
+const fetchStatus = () => LOCAL ? getJSON('./status.json') : postJSON({a: 'status', k: REG.access});
 const grantUrl = acct => LOCAL ? './grant.json' : EXEC_URL + '?a=grant&acct=' + encodeURIComponent(acct);
 
 let REG = null;       // registration (IndexedDB "reg"): {state:'pending'|'ok', mode:'x'|'pw', acct, access, grant, grantP, ...}
@@ -47,7 +48,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v55';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v58';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -123,7 +124,7 @@ function stepTab(dir) { const i = TAB_ORDER.indexOf(st.tab); showTab(TAB_ORDER[(
   if (!el) return;
   let s = null;
   el.addEventListener('touchstart', e => {
-    if (e.touches.length !== 1 || e.target.closest('input,textarea,.seg,.pgb')) { s = null; return; }
+    if (e.touches.length !== 1 || e.target.closest('input,textarea,.seg,.pgb,#docs,.dsel')) { s = null; return; }   // 主治列（#docs）是可橫向捲動的，從它開始的滑動不切頁
     s = {x: e.touches[0].clientX, y: e.touches[0].clientY};
   }, {passive: true});
   el.addEventListener('touchend', e => {
@@ -639,6 +640,7 @@ async function postJSON(body) {
   if (LOCAL) { window.__LAST_POST__ = body; console.info('[local] POST not sent', body); return {ok: true, local: true}; }
   const r = await fetch(EXEC_URL, {method: 'POST', headers: {'Content-Type': 'text/plain'}, body: JSON.stringify(body),
                                    credentials: 'omit', cache: 'no-store'});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
 
@@ -653,7 +655,7 @@ async function refreshData() {
   if (!REG || REG.state !== 'ok') return false;
   const session = SESSION;
   let j;
-  try { j = await getJSON(dataUrl()); }
+  try { j = await fetchData(REG.access); }
   catch (e) { NOTE = BLOB ? '離線：使用本機資料' : ''; renderSys(); return false; }
   if (j && j.ok === false && j.err === 'auth') { authFailed(); return false; }
   if (j && j.ok === false && j.err === 'unavailable') {
@@ -698,10 +700,16 @@ async function keepBlob(j, verified) {
   try { await saveBlob(j); } catch (e) { NOTE = '無法存到本機（僅本次可用）'; }
   if (verified) await markVerified(j.stamp);
 }
+/* a verified copy newer than the rejected one supersedes it; verifying an older copy ("prev") keeps the rejection,
+ * so the bad copy is not downloaded again before the PC uploads a new one */
+function clearBadIfNewer(stamp) {
+  if (REG.badStamp && !stampNewer(stamp, REG.badStamp)) return;
+  delete REG.badStamp;
+}
 async function markVerified(stamp) {
   if (!REG) return;
   if (REG.verified === stamp && !REG.badStamp) return;
-  REG.verified = stamp; delete REG.badStamp;
+  REG.verified = stamp; clearBadIfNewer(stamp);
   try { await saveReg(REG); await removeBlob('prev'); } catch (e) { /* ignore */ }
 }
 
@@ -734,7 +742,7 @@ function applyData(d) {
 async function refreshStatus() {
   if (!REG || REG.state !== 'ok') return;
   try {
-    const s = await getJSON(statusUrl());
+    const s = await fetchStatus();
     if (s && s.ok === false && s.err === 'auth') authFailed();
     else if (!(s && s.err)) AUTH_BAD = false;                 // a normal reply: the server accepts the key again
     if (s && s.ok === false && s.err === 'unavailable') NOTE = UNAVAIL_MSG;    // keep the last status
@@ -830,14 +838,16 @@ async function passkeyCreate(user, name, salt) {
 }
 
 /* ================= first-run setup: Face ID enrolment ================= */
-const ENROLL_ERR = {rate: '登記人數過多，請 10 分鐘後再試', full: '登記佇列已滿，請聯絡管理者', 'not configured': '伺服器尚未設定，請聯絡管理者'};
+const ENROLL_ERR = {inv: '登記碼錯誤（請向管理者索取）', rate:'登記人數過多，請 10 分鐘後再試', full: '登記佇列已滿，請聯絡管理者', 'not configured': '伺服器尚未設定，請聯絡管理者'};
 
 async function enrollX(ev) {
   ev.preventDefault();
   const user = $('#su').value.trim(), name = $('#sn').value.trim(), msg = $('#sm');
+  const inv = $('#si').value.replace(/\s+/g, '').toUpperCase();
   const n = Array.from(name).length;
   if (!user) { msg.textContent = '請輸入帳號'; return; }
   if (n < 1 || n > 20 || /[\u0000-\u001f\u007f‪-‮⁦-⁩]/.test(name)) { msg.textContent = '顯示姓名需 1–20 字'; return; }
+  if (!/^[A-Z0-9]{6,32}$/.test(inv)) { msg.textContent = '請輸入登記碼（向管理者索取）'; return; }
   $('#sb').disabled = true; $('#pb').disabled = true;
   msg.textContent = '建立 passkey…';
   try {
@@ -855,7 +865,7 @@ async function enrollX(ev) {
         let r = null;
         try {
           r = await passkeyGet(c.credId, prfSalt(per), null);
-          await submitEnrollX(user, name, per, r.first, c.credId);   // -> pending pane, or showSetup (hides #sx)
+          await submitEnrollX(user, name, per, r.first, c.credId, inv);   // -> pending pane, or showSetup (hides #sx)
         } catch (e) {
           msg.textContent = '無法完成：' + prfErr(e) + '（可再按一次）';
           bx.disabled = false;
@@ -865,23 +875,23 @@ async function enrollX(ev) {
       };
       return;
     }
-    await submitEnrollX(user, name, per, c.priv, c.credId);
+    await submitEnrollX(user, name, per, c.priv, c.credId, inv);
   } catch (e) {
     showSetup('無法啟用：' + prfErr(e));
   }
 }
 
 /* enrolment key priv (wiped here) -> POST enroll -> pending state */
-async function submitEnrollX(user, name, per, priv, credId) {
+async function submitEnrollX(user, name, per, priv, credId, inv) {
   let pub;
   try { pub = await x25519Pub(priv); } finally { priv.fill(0); }
   const acct = accountId(user), pubB64 = b64e(pub), code = await confirmCode(pub);
-  const j = await postJSON({a: 'enroll', acct: acct, name: name, pub: pubB64, code: code, period: per});
+  const j = await postJSON({a: 'enroll', acct: acct, name: name, pub: pubB64, code: code, period: per, inv: inv});
   if (!j || !j.ok) { showSetup((j && ENROLL_ERR[j.err]) || '登記送出失敗，請稍後再試'); return; }
   REG = {v: 1, state: 'pending', mode: 'x', acct: acct, name: name, pub: pubB64, code: code, credId: credId,
          enrollP: per, at: Date.now()};
   await saveReg(REG);
-  $('#su').value = ''; $('#sn').value = '';
+  $('#su').value = ''; $('#sn').value = ''; $('#si').value = '';
   showPending();
 }
 
@@ -958,7 +968,7 @@ async function setupPw(ev) {
   msg.textContent = '下載資料中…';
   const reg = {v: 1, state: 'ok', mode: 'pw', acct: accountId(user), access: key};
   let j;
-  try { j = await getJSON(LOCAL ? './data.json' : EXEC_URL + '?a=data&k=' + encodeURIComponent(key)); }
+  try { j = await fetchData(key); }
   catch (e) { showSetup('無法連線，請稍後再試'); return; }
   if (j && j.ok === false && j.err === 'auth') { showSetup('存取碼錯誤或已失效'); return; }
   if (j && j.ok === false && j.err === 'unavailable') { showSetup('伺服器暫時無法使用，請稍後再試'); return; }
@@ -991,7 +1001,21 @@ async function loginPw(ev) {
   const user = $('#lu').value.trim(), pass = normPass($('#lp').value);
   $('#lp').value = '';
   const r = await decryptV3PwKek(BLOB, user, pass);
-  if (!r) { msg.textContent = '帳號或通關句錯誤'; btn.disabled = false; return; }
+  if (!r) {
+    // a wrong password is common, so only a verified "prev" that opens with the same password proves this copy is bad
+    const prev = await usablePrev();
+    const r2 = prev ? await decryptV3PwKek(prev, user, pass) : null;
+    const d2 = r2 ? decodeData(r2.pt) : null;
+    if (!r2 || !dataOk(d2, prev)) { if (r2) r2.kek.fill(0); msg.textContent = '帳號或通關句錯誤'; btn.disabled = false; return; }
+    const bad = BLOB.stamp;
+    REG.badStamp = bad; REG.verified = prev.stamp;        // keep badStamp (markVerified would drop it)
+    BLOB = prev;
+    try { await saveReg(REG); await saveBlob(prev); await removeBlob('prev'); } catch (e) { /* ignore */ }
+    msg.textContent = '';
+    await startPw(d2, user, r2.kek, prev);
+    toast(`新資料（${clip(bad)}）無法開啟，已改用前一份資料（${clip(prev.stamp)}）`);
+    return;
+  }
   const d = decodeData(r.pt);
   if (!dataOk(d, BLOB)) { r.kek.fill(0); await rejectBlob(); return; }
   msg.textContent = '';
@@ -999,23 +1023,31 @@ async function loginPw(ev) {
   await startPw(d, user, r.kek, BLOB);
 }
 
-/* The stored blob's inner stamp differs from its plaintext stamp: do not use it. Remember its stamp (refreshData
- * refuses it until a different stamp arrives) and go back to the last verified blob ("prev"); no re-download. */
-async function rejectBlob() {
-  const bad = BLOB ? BLOB.stamp : '';
-  REG.badStamp = bad;
-  try { await saveReg(REG); } catch (e) { /* ignore */ }
+/* the last verified blob kept as "prev" while a newer, unverified one is current; null when there is none */
+async function usablePrev() {
   let prev = null;
   try { prev = await loadBlob('prev'); } catch (e) { prev = null; }
-  if (prev && prev.v === 3 && prev.stamp !== bad) {
+  return prev && prev.v === 3 && prev.k && typeof prev.k === 'object' && prev.stamp !== (BLOB && BLOB.stamp) ? prev : null;
+}
+
+/* The stored blob cannot be used: its inner stamp differs from its plaintext stamp (why 'stamp'), or this phone's key
+ * cannot open it (why 'open'). Remember its stamp (refreshData refuses it until a different stamp arrives) and go back
+ * to the last verified blob ("prev"); no re-download. */
+async function rejectBlob(why) {
+  const bad = BLOB ? BLOB.stamp : '';
+  const what = why === 'open' ? '無法以您的金鑰開啟' : '內外時間不一致';
+  REG.badStamp = bad;
+  try { await saveReg(REG); } catch (e) { /* ignore */ }
+  const prev = await usablePrev();
+  if (prev) {
     BLOB = prev;
     try { await saveBlob(prev); await removeBlob('prev'); } catch (e) { /* ignore */ }
-    showLogin(`新資料（${clip(bad)}）內外時間不一致，已改用前一份資料（${clip(prev.stamp)}），請再登入一次`);
+    showLogin(`新資料（${clip(bad)}）${what}，已改用前一份資料（${clip(prev.stamp)}），請再登入一次`);
     return;
   }
   BLOB = null;
   try { await removeBlob(); } catch (e) { /* ignore */ }
-  showBoot(`資料（${clip(bad)}）內外時間不一致，已拒收；等待電腦下一次更新`, true);
+  showBoot(`資料（${clip(bad)}）${what}，已拒收；等待電腦下一次更新`, true);
 }
 
 /* Face ID: PRF(first = salt of the period this blob was wrapped for, second = salt of this month). The first key
@@ -1025,7 +1057,10 @@ async function loginX() {
   const msg = $('#lm');
   if (!BLOB) { msg.textContent = '尚無資料'; return; }
   const e = own(BLOB.k, REG.acct) ? BLOB.k[REG.acct] : null;
-  if (!e || e.t !== 'x' || !PERIOD_RE.test(String(e.p))) { msg.textContent = '資料中尚無您的 Face ID 登記（電腦下次更新資料後即可登入）'; return; }
+  if (!e || e.t !== 'x' || !PERIOD_RE.test(String(e.p))) {
+    if (await usablePrev()) { await rejectBlob('open'); return; }   // the newer copy left this account out: the verified one still works
+    msg.textContent = '資料中尚無您的 Face ID 登記（電腦下次更新資料後即可登入）'; return;
+  }
   const cur = period(new Date());
   fxBusy(true); msg.textContent = '';
   let r;
@@ -1033,7 +1068,12 @@ async function loginX() {
   catch (err) { msg.textContent = '無法使用 Face ID：' + prfErr(err); fxBusy(false); return; }
   const wipe = () => { r.first.fill(0); if (r.second) r.second.fill(0); };
   const pt = await decryptV3X(BLOB, REG.acct, r.first);
-  if (!pt) { wipe(); msg.textContent = 'Face ID 金鑰無法開啟資料（請確認使用登記時的 passkey）'; fxBusy(false); return; }
+  if (!pt) {
+    wipe(); fxBusy(false);
+    // the passkey is bound to REG.credId, so a failure here means this copy is bad for us: fall back to the verified one
+    if (await usablePrev()) { await rejectBlob('open'); return; }
+    msg.textContent = 'Face ID 金鑰無法開啟資料（請確認使用登記時的 passkey）'; return;
+  }
   const d = decodeData(pt);
   if (!dataOk(d, BLOB)) { wipe(); await rejectBlob(); return; }
   KEYS = {}; KEYS[e.p] = r.first;
@@ -1046,7 +1086,7 @@ async function loginX() {
   }
   const pruned = pruneGrants(grants, e.p, cur);
   if (pruned !== grants) REG.grants = pruned;
-  REG.verified = BLOB.stamp; delete REG.badStamp;
+  REG.verified = BLOB.stamp; clearBadIfNewer(BLOB.stamp);
   try { await saveReg(REG); await removeBlob('prev'); } catch (err) { /* ignore */ }
   msg.textContent = '';
   const rotPriv = rotate ? KEYS[cur].slice() : null, rotAuth = AUTH ? AUTH.slice() : null;   // copies: lock() may wipe the globals
@@ -1113,6 +1153,11 @@ async function start(d) {
 
 /* Wipe plaintext and keys from memory and the DOM, back to the login screen (no reload: the blob stays). */
 function lock() {
+  // save unsaved to-do text while the keys still exist: saveNotes() seals synchronously before its first await
+  if (D) {
+    if (NOTE_I >= 0) commitNew();                         // typed into 新增待辦 without Enter
+    if (NOTE_T) { clearTimeout(NOTE_T); NOTE_T = null; saveNotes(); }   // pending 500 ms save of an edit / the memo
+  }
   SESSION++;
   clearTimeout(idleT);
   stopPoll();
@@ -1122,12 +1167,14 @@ function lock() {
   KEYS = null; KEK = null; AUTH = null; USER = null; LOGIN_KEY = null; D = null; P = null; PENDING = null;
   closeLab(); applyUi(null);                                          // wording goes back to the neutral labels with the data
   ITEMS = []; CHECKS = []; REQ_SENDING = false;
-  NOTES = {}; UNDO = null; NOTE_I = -1; SW0 = null; clearTimeout(NOTE_T); SW_CHART = null;
+  NOTES = {}; UNDO = null; NOTE_I = -1; SW0 = null; clearTimeout(NOTE_T); NOTE_T = null; SW_CHART = null;
   if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }   // onstop sees the new session and keeps nothing
   REC = null; RECCHUNKS = [];
   if (AUDIO) { AUDIO.pause(); AUDIO = null; }
   BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};
   st = newSt();
+  // the checklist / recording elements sit inside #db while a patient page is open: bring them home before #db is wiped
+  if ($('#np') && $('#npd') && $('#npbar')) $('#np').append($('#npd'), $('#npbar'));
   ['#pri', '#cards', '#zone', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#npd', '#npbar', '#printdoc'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
   document.body.style.overflow = '';
   $('#q').value = ''; $('#lp').value = ''; $('#lu').value = ''; REQ_MSG = '';
@@ -1422,7 +1469,7 @@ $('#impf').addEventListener('change', async e => {
   toast(`匯入 ${r.ok} 筆（${r.patients || 0} 筆${U.pt}）` + (r.dup ? `，重複略過 ${r.dup}` : '') + (r.miss ? `，對不到 ${r.miss}` : ''));
 });
 let NOTE_T = null;
-const noteSaveSoon = () => { clearTimeout(NOTE_T); NOTE_T = setTimeout(saveNotes, 500); };
+const noteSaveSoon = () => { clearTimeout(NOTE_T); NOTE_T = setTimeout(() => { NOTE_T = null; saveNotes(); }, 500); };
 const newItem = t => ({id: NOTE_ID(), t: t || '', done: false, ts: Date.now()});
 /* the empty line at the end becomes a real item (no redraw: a tap on another control must not be swallowed) */
 function commitNew() {
@@ -1515,9 +1562,12 @@ async function exportDoc(kind) {
   if (!REG || !REG.access) { toast('尚未連線，無法建立 Doc'); return; }
   toast('建立 Google Doc 中…');
   const win = window.open('', '_blank');     // opened inside the click (iPhone blocks popups opened after the await)
+  if (win) { try { win.opener = null; } catch (e) { /* ignore */ } }   // the Doc tab gets no handle back to this app
   try {
     const j = await postJSON({a: 'doc', k: REG.access, kind: kind, date: isoDay(Date.now()), groups: groups});
-    if (j && j.ok && j.url) { toast('已建立 Google Doc'); if (win) win.location = j.url; else location.href = j.url; }
+    const docOk = j && j.ok && typeof j.url === 'string' && j.url.startsWith('https://docs.google.com/document/');
+    if (docOk) { toast('已建立 Google Doc'); if (win) win.location = j.url; else location.href = j.url; }
+    else if (j && j.ok && j.url) { if (win) win.close(); toast('回傳的連結不是 Google Doc，未開啟'); }
     else { if (win) win.close(); toast(j && j.err === 'rate' ? '請稍候幾秒再試' : '建立失敗（中繼未設定或權限不足）'); }
   } catch (e) { if (win) win.close(); toast('連線失敗，稍後再試'); }
 }
