@@ -48,7 +48,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v63';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v64';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -495,7 +495,7 @@ function renderDetail(i, from) {
   const drugHd = '<div class="dr dh2"><span class="dn">藥名</span><span class="dq">劑量</span><span class="dt">途徑</span><span class="dfq">頻次</span><span class="dd">天數</span></div>';
   const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (PHARM.includes(m.cat) ? m.cat : '其他') === c);   // unknown category -> 其他, never dropped
     return L.length ? cbox(c, L.length, `<div class="dgrid">${drugHd}${L.map(drugLi).join('')}</div>`) : ''; }).join('');
-  /* 報告 (relay_config "reports"): p.rep = {tm, img, path}; final ones carry text, others are listed only */
+  /* 報告 (relay_config "reports"): p.rep = {tm, img, path, endo}; final ones carry text, others are listed only */
   const rep = p.rep && typeof p.rep === 'object' ? p.rep : null, rd = d => esc(String(d || '').replace(/^20(\d\d)\//, '$1/'));
   const repRow = (r, body) => {
     const it = `<span class="it">${esc(r.i)}${r.f ? '' : ' <small>未完成</small>'}</span>`;
@@ -504,7 +504,9 @@ function renderDetail(i, from) {
   };
   let repHtml = '', repN = 0;
   if (rep) {
-    const tm = objs(rep.tm), img = objs(rep.img), path = objs(rep.path), by = new Map();
+    const tm = objs(rep.tm), img = objs(rep.img), by = new Map();
+    const path = objs(rep.path).map(r => Object.assign({k: 'path'}, r)).concat(objs(rep.endo).map(r => Object.assign({k: 'endo'}, r)))
+      .sort((a, b) => String(b.d || '').localeCompare(String(a.d || '')));        // pathology + GI endoscopy, newest first
     tm.forEach(r => { const k = String(r.i || ''); if (!by.has(k)) by.set(k, []); by.get(k).push(r); });
     const tmRows = [...by.entries()].map(([k, rows]) => `<div class="mr"><span class="st">${esc(k)}</span><span class="it">${rows.slice(0, 6).map(r =>
       r.v != null ? `<b${r.h ? ' class="hi"' : ''}>${esc(r.v)}${r.h ? '↑' : ''}</b> <small>${rd(r.d)}</small>` : `<small>${rd(r.d)}${r.f ? '' : ' 未完成'}</small>`).join(' · ')}${rows[0] && rows[0].r ? `<small class="ref">參考 ${esc(rows[0].r)}${rows[0].u ? ' ' + esc(rows[0].u) : ''}</small>` : ''}</span></div>`).join('');
@@ -513,7 +515,7 @@ function renderDetail(i, from) {
     repN = tm.length + img.length + path.length;
     repHtml = cbox('腫瘤指標', tm.length, tmRows ? `<div class="cm">${tmRows}</div>` : '')
             + cbox('影像報告', img.length, imgRows ? `<div class="cm">${imgRows}</div>` : '')
-            + cbox('病理報告', path.length, pathRows ? `<div class="cm">${pathRows}</div>` : '');
+            + cbox('病理 / 內視鏡報告', path.length, pathRows ? `<div class="cm">${pathRows}</div>` : '');
   }
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
      + fold('報告（腫瘤指標 / 影像 / 病理）', repN ? repN + ' 筆' : '', repHtml, false)

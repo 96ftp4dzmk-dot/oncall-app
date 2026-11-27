@@ -219,8 +219,8 @@ details.tg ul{margin:0;padding-left:16px}details.tg li{margin:3px 0}
 
 /* ---- v11: softer and card-based (rounder corners, light borders, cards instead of divider lines) ---- */
 :root{--r:16px;--r2:12px}
-.ck,.pr,.tdo{margin:0 14px 10px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf);box-shadow:0 1px 2px #1f1e1d0d}
-.ck{padding:0 4px 0 14px}
+.pr,.tdo{margin:0 14px 10px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf);box-shadow:0 1px 2px #1f1e1d0d}
+.ck{margin:0 14px;padding:0 4px 0 14px;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:none;box-shadow:none}   /* 優先 checklist: plain rows, no card frame (user 2026-11-27) */
 .pr,.tdo{padding:12px 14px}
 .ck:active,.pr:active,.tdo:active{background:var(--hover)}
 .gh{padding:16px 18px 8px}.sec{padding:14px 18px 6px}.donehd{padding:18px 18px 8px}
