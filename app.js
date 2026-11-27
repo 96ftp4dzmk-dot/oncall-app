@@ -48,7 +48,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v61';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v63';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -165,7 +165,7 @@ function todayHtml() {
   const t0 = new Date().setHours(0, 0, 0, 0), ct = NOTES._ct || {};
   const hm = ms => { const d = new Date(Number(ms)); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
   const open = [], done = [];
-  P.forEach((p, pi) => noteItems(p.chart).forEach(x => {
+  P.forEach((p, pi) => core(p) && noteItems(p.chart).forEach(x => {   // other-department (x) patients: 總值 mode only
     if (!x.t) return;
     if (!x.done) open.push({pi: pi, text: x.t});
     else if (Number(x.dt) >= t0) done.push({pi: pi, text: x.t, t: Number(x.dt)});
@@ -495,7 +495,28 @@ function renderDetail(i, from) {
   const drugHd = '<div class="dr dh2"><span class="dn">藥名</span><span class="dq">劑量</span><span class="dt">途徑</span><span class="dfq">頻次</span><span class="dd">天數</span></div>';
   const drugBoxes = PHARM.map(c => { const L = drugs.filter(m => (PHARM.includes(m.cat) ? m.cat : '其他') === c);   // unknown category -> 其他, never dropped
     return L.length ? cbox(c, L.length, `<div class="dgrid">${drugHd}${L.map(drugLi).join('')}</div>`) : ''; }).join('');
+  /* 報告 (relay_config "reports"): p.rep = {tm, img, path}; final ones carry text, others are listed only */
+  const rep = p.rep && typeof p.rep === 'object' ? p.rep : null, rd = d => esc(String(d || '').replace(/^20(\d\d)\//, '$1/'));
+  const repRow = (r, body) => {
+    const it = `<span class="it">${esc(r.i)}${r.f ? '' : ' <small>未完成</small>'}</span>`;
+    return body ? `<details class="mr"><summary><span class="st">${rd(r.d)}</span>${it}</summary><div class="mx">${body}</div></details>`
+                : `<div class="mr"><span class="st">${rd(r.d)}</span>${it}${r.f ? '<small class="nl">內文未載入</small>' : ''}</div>`;
+  };
+  let repHtml = '', repN = 0;
+  if (rep) {
+    const tm = objs(rep.tm), img = objs(rep.img), path = objs(rep.path), by = new Map();
+    tm.forEach(r => { const k = String(r.i || ''); if (!by.has(k)) by.set(k, []); by.get(k).push(r); });
+    const tmRows = [...by.entries()].map(([k, rows]) => `<div class="mr"><span class="st">${esc(k)}</span><span class="it">${rows.slice(0, 6).map(r =>
+      r.v != null ? `<b${r.h ? ' class="hi"' : ''}>${esc(r.v)}${r.h ? '↑' : ''}</b> <small>${rd(r.d)}</small>` : `<small>${rd(r.d)}${r.f ? '' : ' 未完成'}</small>`).join(' · ')}${rows[0] && rows[0].r ? `<small class="ref">參考 ${esc(rows[0].r)}${rows[0].u ? ' ' + esc(rows[0].u) : ''}</small>` : ''}</span></div>`).join('');
+    const imgRows = img.map(r => repRow(r, r.imp || r.t ? (r.imp ? `<b>Impression</b>\n${esc(r.imp)}\n\n` : '') + esc(r.t || '') : '')).join('');
+    const pathRows = path.map(r => repRow(r, r.t ? (r.s ? `<b>${esc(r.s)}</b>\n` : '') + (r.no ? `<small>${esc(r.no)}</small>\n` : '') + esc(r.t) : '')).join('');
+    repN = tm.length + img.length + path.length;
+    repHtml = cbox('腫瘤指標', tm.length, tmRows ? `<div class="cm">${tmRows}</div>` : '')
+            + cbox('影像報告', img.length, imgRows ? `<div class="cm">${imgRows}</div>` : '')
+            + cbox('病理報告', path.length, pathRows ? `<div class="cm">${pathRows}</div>` : '');
+  }
   h += fold('培養（7 天）', nMicro ? nMicro + ' 筆' : '', cx, false)
+     + fold('報告（腫瘤指標 / 影像 / 病理）', repN ? repN + ' 筆' : '', repHtml, false)
      + fold('今日檢驗 / 影像', today.length, today.map(t => `<div class="row">${esc(t)}</div>`).join(''), false)
      + fold('目前處方', drugs.length, drugBoxes, true)
      + fold('交班與交代事項', '', p.memo ? `<div class="memo">${esc(p.memo)}</div>` : '', true)
