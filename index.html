@@ -6,14 +6,14 @@
 <meta name="referrer" content="no-referrer">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Notes">
+<meta name="apple-mobile-web-app-title" content="Beacon">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F5F4EE" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="icon" href="icon-192.png" type="image/png">
-<title>Notes</title>
+<title>Beacon</title>
 <style>
 /* 暖紙 (warm paper): tokens from docs/ui-redesign/spec.md section 4. System fonts only (CSP). Vertical scrolling only. */
 :root{--bg:#F5F4EE;--surf:#FFFFFF;--ink:#1F1E1D;--sub:#77736A;--line:#E2DED3;--line2:#ECE9E0;--seg:#EAE7DD;--acc:#C96442;--boxc:#B9B3A6;--band:#E9E4D6;--okc:#5B8C5A;
@@ -100,13 +100,13 @@ button{font-family:inherit}
 .chip{display:inline-block;padding:2px 8px;border-radius:7px;font:600 14px var(--serif);font-variant-numeric:tabular-nums;white-space:nowrap}
 .chip.g1{background:var(--cv-bg);color:var(--cv-fg)}.chip.g2{background:var(--cn-bg);color:var(--cn-fg)}.chip.g3{background:var(--cb-bg);color:var(--cb-fg)}.chip.g4{background:var(--ca-bg);color:var(--ca-fg)}.chip.g5{background:var(--ce-bg);color:var(--ce-fg)}.chip.g6{background:var(--co-bg);color:var(--co-fg)}
 .tag{display:inline-block;padding:0 6px;border-radius:5px;border:1px solid currentColor;font:700 10.5px/17px var(--sans);letter-spacing:.05em}
-.t-CRIT{color:var(--cv-solid)}.t-NEW{color:var(--newc)}.t-DNR{color:var(--sub)}.t-EOL{color:var(--eolc)}
+.t-CRIT{color:var(--cv-solid)}.t-NEW{color:var(--newc)}.t-DNR{color:var(--sub)}.t-EOL{color:var(--eolc)}.t-DEPT{color:var(--ink)}
 
 /* ---- all tab ---- */
 .seg{display:flex;margin:10px 20px 6px;padding:3px;border-radius:11px;background:var(--seg)}
 .seg button{flex:1;min-height:44px;border:0;background:none;color:var(--ink);padding:0;border-radius:8px;font:500 14px var(--sans)}
 .seg button.on{background:var(--surf);box-shadow:0 1px 3px #0002}
-#q{display:block;width:calc(100% - 40px);margin:4px 20px 6px;padding:10px 12px;border:0;border-radius:10px;background:var(--seg);color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
+#q,#drq{display:block;width:calc(100% - 40px);margin:4px 20px 6px;padding:10px 12px;border:0;border-radius:10px;background:var(--seg);color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
 .sec{padding:14px 20px 4px;font:600 12px var(--sans);letter-spacing:.06em;color:var(--sub)}
 .pr{padding:12px 20px;border-bottom:1px solid var(--line2);cursor:pointer}
 .pr .r1{display:flex;align-items:center;gap:8px}
@@ -228,7 +228,12 @@ details.tg ul{margin:0;padding-left:16px}details.tg li{margin:3px 0}
 .tb{border-top-color:var(--line2)}
 .nav{border-bottom-color:transparent}
 .seg{margin:10px 14px 8px;border-radius:14px}.seg button{border-radius:11px}
-#q{width:calc(100% - 28px);margin:4px 14px 8px;border-radius:14px}
+#q,#drq{width:calc(100% - 28px);margin:4px 14px 8px;border-radius:14px}
+.seg.mode button{min-height:38px;font-weight:600}
+.nhd{margin:2px 14px 8px;padding:8px 12px;border-radius:12px;background:var(--seg);font:13px/1.5 var(--sans);color:var(--ink)}
+.nhd b{margin-right:4px}.nhd small{display:block;color:var(--sub);font-size:11.5px}
+.vh{display:flex;align-items:baseline;gap:8px;margin:14px 14px 4px;padding-bottom:4px;border-bottom:1px solid var(--line);font:600 14px var(--sans);color:var(--ink)}
+.vh span{color:var(--sub);font:12px var(--mono, monospace)}.vh em{margin-left:auto;font-style:normal;color:var(--sub);font-size:12px}
 .bnr{margin:8px 14px 0;border-radius:14px}
 .chip{border-radius:9px}.tag{border-radius:7px}
 .dh{padding:14px 18px 4px}
@@ -399,7 +404,7 @@ details.tg .in{padding:0 0 12px 8px}
 </style></head><body>
 <div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
-<div id="setup" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2 data-t="{duty}">Notes</h2><p class="sub">首次使用</p>
+<div id="setup" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2 data-t="{duty}">Beacon</h2><p class="sub">首次使用</p>
 <form id="sf" autocomplete="off">
 <input id="su" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
 <input id="sn" type="text" placeholder="顯示姓名（給管理者核對）" maxlength="20" required>
@@ -422,7 +427,7 @@ details.tg .in{padding:0 0 12px 8px}
 <button id="pchk" type="button" class="ghost">立即檢查</button>
 <button id="pcan" type="button" class="ghost">取消登記</button></div>
 
-<div id="login" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2 data-t="{duty}">Notes</h2><p class="sub" id="lsub"></p>
+<div id="login" class="pane" style="display:none"><img class="logo" src="icon.svg" alt="" width="64" height="64"><h2 data-t="{duty}">Beacon</h2><p class="sub" id="lsub"></p>
 <div id="lx"><button id="fx" type="button">以 Face ID 開啟</button></div>
 <form id="lf" autocomplete="on">
 <input id="lu" name="username" type="text" placeholder="帳號" autocomplete="username" autocapitalize="off" spellcheck="false" required>
@@ -439,9 +444,11 @@ details.tg .in{padding:0 0 12px 8px}
   <div id="pri"></div>
   <div id="all" style="display:none">
     <div class="tdh"><span data-t="{zi}＋{zo} 全部{pt}">A＋B 全部item</span><button class="docb" data-doc="all" type="button">輸出 Doc</button></div>
+    <div class="seg mode" id="mode"></div>
+    <div class="nhd" id="nhd" style="display:none"></div>
     <div class="seg" id="zone"></div>
-    <div class="dsel" id="docs"></div>
-    <input type="search" id="q" placeholder="搜尋 ID-2 / ID-1 / 姓名" data-tp="搜尋 {bed} / {chart} / 姓名" autocomplete="off">
+    <input type="search" id="drq" placeholder="主治章號，多位用 / 分隔（例 1234/5678）" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <input type="search" id="q" placeholder="搜尋 ID-2 / ID-1 / 姓名（可用 / 複選）" data-tp="搜尋 {bed} / {chart} / 姓名（可用 / 複選）" autocomplete="off">
     <div id="cards"></div>
   </div>
   <div class="tb"><button type="button" data-tab="pri">優先</button><button type="button" data-tab="all">全部</button></div>

@@ -81,6 +81,69 @@
     out.forEach(it => { delete it._ri; if (seen.has(it.id)) it.id += '#' + it.pi; seen.add(it.id); });
     return out;
   }
+  /* ---- v60 總值 mode: night alerts. Same thresholds as relay_night.py (keep both in step). A value counts only when its
+   * reading is within NIGHT_H hours of the data time; for vitals the newest reading of each column decides. ---- */
+  const NIGHT_H = 24;
+  const NIGHT_RULES = [
+    {key: 'T', g: 1, col: 1, help: 'T ≥ 38.0', t: v => v >= 38.0, x: v => `T ${v.toFixed(1)}`},
+    {key: 'SBP', g: 1, col: 4, help: 'SBP < 90', t: v => v < 90, x: v => `SBP ${v}`},
+    {key: 'HR', g: 1, col: 2, help: 'HR > 130', t: v => v > 130, x: v => `HR ${v}`},
+    {key: 'RR', g: 1, col: 3, help: 'RR > 30', t: v => v > 30, x: v => `RR ${v}`},
+    {key: 'SpO2', g: 1, col: 6, help: 'SpO₂ < 90', t: v => v < 90, x: v => `SpO₂ ${v}%`},
+    {key: 'pH', g: 1, lab: 'pH', help: 'pH < 7.2', t: v => v < 7.2, x: v => `pH ${v}`},
+    {key: 'Lactate', g: 1, lab: 'Lactate', help: 'Lactate > 20 mg/dL', t: v => v > 20, x: v => `Lactate ${v}`},
+    {key: 'Cre', g: 4, lab: 'Cre', help: 'Cre > 3', t: v => v > 3, x: v => `Cre ${v}`},
+  ];
+  /* "YYYY-MM-DD HH:MM" -> ms on the payload's UTC-naive time base, or null */
+  function stampNaiveMs(stamp) {
+    const m = typeof stamp === 'string' && /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(stamp);
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+  }
+  function nightVital(ser, col, since) {
+    if (!Array.isArray(ser)) return null;
+    for (let i = ser.length - 1; i >= 0; i--) {
+      const r = ser[i];
+      if (!Array.isArray(r)) continue;
+      const v = finite(r[col]);
+      if (v == null) continue;
+      const t = finite(r[0]);
+      return t != null && t >= since ? v : null;
+    }
+    return null;
+  }
+  function nightLab(p, label, since) {
+    const e = p.labh && typeof p.labh === 'object' ? p.labh[label] : null;
+    if (!Array.isArray(e) || !Array.isArray(e[1])) return null;
+    let t = finite(e[0]); if (t == null) return null;
+    let last = null;
+    e[1].forEach(r => { if (!Array.isArray(r)) return; const dt = finite(r[0]), v = finite(r[1]); if (dt == null || v == null) return; t += dt; last = [t * 60000, v]; });
+    return last && last[0] >= since ? last[1] : null;
+  }
+  /* {pi: [{g, key, txt}]} for every patient with a night alert; stamp = the data time ("YYYY-MM-DD HH:MM") */
+  function nightItems(P, stamp) {
+    const now = stampNaiveMs(stamp), out = {};
+    if (now == null) return out;
+    const since = now - NIGHT_H * 3600e3;
+    (Array.isArray(P) ? P : []).forEach((p, pi) => {
+      if (!p || typeof p !== 'object') return;
+      NIGHT_RULES.forEach(r => {
+        const v = r.lab ? nightLab(p, r.lab, since) : nightVital(p.ser, r.col, since);
+        if (v != null && r.t(v)) (out[pi] = out[pi] || []).push({g: r.g, key: r.key, txt: r.x(v)});
+      });
+    });
+    return out;
+  }
+  const nightHelp = () => NIGHT_RULES.map(r => r.help);
+
+  /* ---- search terms: "/" (or full-width ／) separates alternatives; spaces are ignored; lower case ---- */
+  const splitTerms = q => String(q == null ? '' : q).replace(/\s+/g, '').toLowerCase().split(/[\/／]/).filter(Boolean);
+  const matchAny = (hay, terms) => !terms.length || terms.some(t => hay.includes(t));
+  /* attending terms: a stamp number matches p.dr exactly (any case); a name of 2+ characters matches inside p.vs */
+  const drMatch = (p, terms) => {
+    const dr = String(p && p.dr != null ? p.dr : '').replace(/\s+/g, '').toLowerCase(), vs = String(p && p.vs != null ? p.vs : '').replace(/\s+/g, '').toLowerCase();
+    return terms.some(t => (dr && dr === t) || (t.length >= 2 && vs && vs.includes(t)));
+  };
+
   /* series rows that can be drawn: arrays whose time is a finite number inside [t0, t1] */
   const cleanSer = (ser, t0, t1) => (Array.isArray(ser) ? ser : []).filter(r => Array.isArray(r) && finite(r[0]) != null && r[0] >= t0 && r[0] <= t1);
   /* "2026-11-22 13:00" -> "11/22 13:00"; anything else is returned as is ('' for null) */
@@ -151,7 +214,7 @@
     return null;
   }
 
-  const api = {GROUPS, priorityHelp, cleanSer, shortStamp, priorityItems, toggleId, pruneChecks, splitItems, patientsInOrder, cmpWard, bldRank, setInner, labArrow, stripSpec, stripY, stampAgeH, pickBanner};
+  const api = {GROUPS, NIGHT_RULES, nightItems, nightHelp, stampNaiveMs, splitTerms, matchAny, drMatch, priorityHelp, cleanSer, shortStamp, priorityItems, toggleId, pruneChecks, splitItems, patientsInOrder, cmpWard, bldRank, setInner, labArrow, stripSpec, stripY, stampAgeH, pickBanner};
   Object.assign(G, api);
   G.LG = api;
 })(self);
