@@ -48,7 +48,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v66';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v67';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -216,11 +216,13 @@ function todayHtml() {
   }));
   MITEMS.forEach(it => { if (CHECKS.includes(it.id) && Number(ct[it.id]) >= t0) done.push({pi: it.pi, text: it.txt, t: Number(ct[it.id])}); });
   const priOpen = MITEMS.filter(it => !CHECKS.includes(it.id)).length;
-  done.sort((a, b) => b.t - a.t);
+  /* 「清除」只把清除當下以前完成的項目從這張卡藏起來（NOTES._tclr = ms）；勾選與病患頁的已完成待辦都不動 */
+  const clr = Number(NOTES._tclr) || 0, shown = done.filter(r => r.t > clr);
+  shown.sort((a, b) => b.t - a.t);
   const who = pi => `<b>${esc(P[pi].bed)} ${esc(P[pi].name)}</b>`;
-  let h = `<div class="today"><div class="tdy-h"><span>今日</span><small>待做 ${open.length} · 優先未勾 ${priOpen} · 今天完成 ${done.length}</small></div>`;
+  let h = `<div class="today"><div class="tdy-h"><span>今日</span><small>待做 ${open.length} · 優先未勾 ${priOpen} · 今天完成 ${shown.length}</small></div>`;
   h += open.length ? open.slice(0, 40).map(r => `<div class="tdy-r" data-go="${r.pi}">${who(r.pi)}<span>${esc(r.text)}</span></div>`).join('') : '<div class="tdy-e">沒有未完成的待處理文字</div>';
-  if (done.length) h += '<div class="tdy-sub">今天完成</div>' + done.slice(0, 40).map(r => `<div class="tdy-r done" data-go="${r.pi}"><small>${hm(r.t)}</small>${who(r.pi)}<span>${esc(r.text)}</span></div>`).join('');
+  if (shown.length) h += '<div class="tdy-sub"><span>今天完成</span><button class="tdy-clr" type="button" data-tclr="1">清除</button></div>' + shown.slice(0, 40).map(r => `<div class="tdy-r done" data-go="${r.pi}"><small>${hm(r.t)}</small>${who(r.pi)}<span>${esc(r.text)}</span></div>`).join('');
   return h + '</div>';
 }
 function renderPri() {
@@ -623,6 +625,7 @@ document.addEventListener('click',e=>{
  const lct=t.closest('.lc[data-lab]');if(lct&&st.labMode){toggleLabSel(lct.dataset.lab);return}
  const dcb=t.closest('[data-doc]');if(dcb){exportDoc(dcb.dataset.doc);return}
  const gt=t.closest('[data-gtog]');if(gt){const k=gt.dataset.gtog==='done'?'done':+gt.dataset.gtog;if(PRI_COLL.has(k))PRI_COLL.delete(k);else PRI_COLL.add(k);renderPri();return}
+ const tcl=t.closest('[data-tclr]');if(tcl){NOTES._tclr=Date.now();saveNotes();renderPri();return}
  const gb=t.closest('[data-go]');if(gb){renderDetail(+gb.dataset.go,'pri');return}
  const ck=t.closest('.ck');if(ck){if(ck.dataset.pi!==undefined)togglePatient(+ck.dataset.pi);else toggleCheck(ck.dataset.id);return}
  const pr=t.closest('.pr');if(pr){renderDetail(+pr.dataset.i,'all');return}
