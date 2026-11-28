@@ -48,7 +48,7 @@ let SESSION = 0;      // bumped by lock(): async work that started in an earlier
 let ITEMS = [];       // priority items for the current data (logic.js priorityItems), memory only
 let CHECKS = [];      // ticked item ids in tick order, memory only; stored encrypted (see loadChecks / saveChecks)
 let BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};   // inputs of logic.js pickBanner
-const APP_V = 'v64';   // keep equal to SHELL_V in sw.js
+const APP_V = 'v66';   // keep equal to SHELL_V in sw.js
 const NOTE_INFO = 'oncall-notes-v1';   // subkey label for the to-do notes and the audio (crypto.js sealBytes)
 let NOTES = {};       // {chart: {todo: bool, items: [{id, t, done}], audio: [{id, ts, s, mime}]}}; memory only, stored sealed
 let UNDO = null;      // last 「待辦」 change {chart, before} for the 復原 button
@@ -79,12 +79,20 @@ function applyUi(ui) {
   document.querySelectorAll('[data-t]').forEach(e => { e.textContent = fmtU(e.dataset.t); });
   document.querySelectorAll('[data-tp]').forEach(e => { e.placeholder = fmtU(e.dataset.tp); });
 }
-/* v60 「全部」 modes: night = 總值（夜間警示）, second = 二線（分區 + 章號）, plain = 普通（依主治分組）. The choice is not sensitive: kept in localStorage */
-const MODES = [['night', '總值'], ['second', '二線'], ['plain', '普通']];
-const loadMode = () => { try { const m = localStorage.getItem('beacon-mode'); return MODES.some(x => x[0] === m) ? m : 'second'; } catch (e) { return 'second'; } };
+/* v66 modes, picked on the #modes screen after every unlock (logic.js modeIdx decides who is in each). The choice is not
+ * sensitive: kept in localStorage 'beacon-mode' (v60 values migrate: night -> im, second -> second, plain -> picker) */
+const MODES = [['im', 'A', '內科總值', '13 個內科 · 完整資料 · Q4H'], ['second', 'B', '次專科二線', 'MO / HEMA · {zi} / {zo}'],   // zone words come from the payload (fmtU)
+               ['lite', 'C', '平日 Lite', '勾選主治 · MO / HEMA · Q2H'], ['consult', 'D', '會診', 'MO / HEMA 未回覆會診']];
+const modeOf = id => MODES.find(m => m[0] === id) || MODES[0];
+const loadMode = () => { try { return migrateMode(localStorage.getItem('beacon-mode')); } catch (e) { return ''; } };
 const saveMode = m => { try { localStorage.setItem('beacon-mode', m); } catch (e) { /* private mode */ } };
-const newSt = () => ({tab: 'pri', zone: U.zi, q: '', dq: '', mode: loadMode(), idx: [], cur: -1, from: 'pri', order: [], dr: '', labMode: false, labSel: new Set()});
+/* zone of mode B as a side ('i' = U.zi, 'o' = U.zo): the zone words themselves are never stored in plaintext */
+const loadZs = () => { try { return localStorage.getItem('beacon-zone') === 'o' ? 'o' : 'i'; } catch (e) { return 'i'; } };
+const saveZs = z => { try { localStorage.setItem('beacon-zone', z === 'o' ? 'o' : 'i'); } catch (e) { /* private mode */ } };
+const zoneWord = () => st.zs === 'o' ? U.zo : U.zi;
+const newSt = () => ({tab: 'pri', zs: loadZs(), q: '', mode: loadMode() || 'im', idx: [], cur: -1, from: 'pri', order: [], labMode: false, labSel: new Set(), ltOpen: null});
 let st = newSt();
+const SCHED = '內科全部 Q4H（01·05·09·13·17·21），MO/HEMA Q2H';
 /* English outlined labels only (no Chinese on a patient): CRIT NEW DNR EOL; NF is expressed by the ANC chip */
 function tags(p) {
   let h = '';
@@ -97,15 +105,26 @@ function tags(p) {
 const chipHtml = it => `<span class="chip g${Number(it.g)}">${esc(it.txt)}</span>`;
 
 /* recompute the priority items from P and drop ticks whose item is gone or changed -> true when the ticks changed */
-/* v60: records with x = true are the other internal-medicine departments (night_fetch, 總值 nights only): they show in
-   總值 mode only - never in 優先 / 二線 / 普通 / Doc / import. coreP() keeps P's indexes (null in their place). */
-const core = p => !!p && !p.x;
-const coreP = () => P.map(p => core(p) ? p : null);
+/* v66: every record is full (a v60 "x" record is treated as a normal one). ITEMS = priority items of every record (ticks are
+   pruned against these, so switching modes never drops a tick); MITEMS = the ones of the current mode's set (優先 tab). */
+let MITEMS = [];
+const liteTicks = () => (NOTES && Array.isArray(NOTES._lite) ? NOTES._lite.map(String) : []);
+const consList = () => (D && Array.isArray(D.cons) ? D.cons.filter(c => c != null && c !== '') : []);
+/* indexes of the current mode's set; searching = a query is typed (mode B then covers both zones) */
+const modeSet = searching => (P ? modeIdx(P, st.mode, {zone: zoneWord(), ticks: liteTicks(), cons: consList(), searching: !!searching}) : []);
+function refreshMode() { const s = new Set(modeSet(false)); MITEMS = ITEMS.filter(it => s.has(it.pi)); }
 function recalc() {
-  ITEMS = priorityItems(coreP());
+  ITEMS = priorityItems(P);
   const kept = pruneChecks(CHECKS, ITEMS), changed = kept.length !== CHECKS.length;
   CHECKS = kept;
+  refreshMode();
   return changed;
+}
+/* a mode that cannot list anyone yet: the reason as an empty-state block, or '' */
+function modeEmpty() {
+  if (st.mode === 'consult' && !consList().length) return `<div class="empty">會診資料尚未接上<small>MO / HEMA 未回覆會診的院內頁面尚未接上；接上後這裡會列出被會診的${U.pt}。目前請改用其他模式。</small></div>`;
+  if (st.mode === 'lite' && !liteTicks().length) return `<div class="empty">尚未勾選主治<small>在上方「主治」清單勾選要看的主治醫師</small></div>`;
+  return '';
 }
 
 const TAB_TITLE = {pri: '優先', all: '全部', todo: '待辦'};
@@ -113,9 +132,34 @@ const TAB_TITLE = {pri: '優先', all: '全部', todo: '待辦'};
 function renderTabs() {
   const open = patientGroups().filter(x => !x.done).length;
   $('.tb [data-tab=pri]').innerHTML = '優先' + (open ? `<span class="ct">${open}</span>` : '');
-  $('.tb [data-tab=all]').textContent = `全部 ${P.filter(core).length}`;
+  $('.tb [data-tab=all]').textContent = `全部 ${modeSet(false).length}`;
   document.querySelectorAll('.tb button').forEach(b => b.classList.toggle('on', b.dataset.tab === st.tab));
   $('#ttl').textContent = TAB_TITLE[st.tab] || '優先';
+  const m = modeOf(st.mode);
+  $('#mdb').innerHTML = `<b>${m[1]}</b> ${esc(m[2])} <span>▾</span>`;
+  renderMbar();
+}
+/* bar under the header, the same for both tabs: B = zone switch, C = attending tick list, else nothing */
+function renderMbar() {
+  const zs = st.mode === 'second', searching = splitTerms(st.q).length > 0;
+  $('#zone').style.display = zs ? '' : 'none';
+  $('#zone').innerHTML = zs ? [['i', U.zi], ['o', U.zo]].map(([k, z]) => `<button type="button" class="${st.zs === k && !searching ? 'on' : ''}" data-z="${k}">${esc(z)} ${P.filter(p => isMH(p) && p.zone === z).length}</button>`).join('') : '';
+  const lt = $('#lite');
+  if (st.mode !== 'lite') { lt.innerHTML = ''; lt.style.display = 'none'; return; }
+  const list = attendingList(P), on = new Set(liteTicks()), n = list.filter(a => on.has(a.key)).length;
+  const open = st.ltOpen == null ? !n : st.ltOpen;
+  lt.style.display = '';
+  lt.innerHTML = `<button type="button" class="lth" data-ltog aria-expanded="${open}">主治 <small>已選 ${n} / ${list.length} 位</small><span class="chev">${open ? '▾' : '▸'}</span></button>` + (open ?
+    (list.length ? list.map(a => `<div class="ltr${on.has(a.key) ? ' on' : ''}" role="checkbox" aria-checked="${on.has(a.key)}" tabindex="0" data-lk="${esc(a.key)}"><span class="cbx"></span><span class="ln">${esc(a.name)}</span><small>${esc(a.dr)}</small><em>${a.n}</em></div>`).join('')
+      : `<div class="ltr0">這份資料沒有 MO / HEMA ${U.pt}</div>`)
+    + '<div class="ltb"><button type="button" data-lall="1">全選</button><button type="button" data-lall="0">清除</button></div>' : '');
+}
+/* Lite ticks live in the sealed notes (NOTES._lite = attending keys), like the 優先 tick times */
+function setLite(keys) {
+  NOTES._lite = Array.from(new Set(keys.map(String)));
+  if (!NOTES._lite.length) delete NOTES._lite;
+  saveNotes();
+  refreshMode(); renderTabs(); renderPri(); renderAll();
 }
 function showTab(t) {
   st.tab = t;
@@ -147,7 +191,7 @@ function stepTab(dir) { const i = TAB_ORDER.indexOf(st.tab); showTab(TAB_ORDER[(
 /* one row per patient: all of that patient's priority items as chips; done when every item is ticked */
 function patientGroups() {
   const by = new Map();
-  ITEMS.forEach(it => { if (!by.has(it.pi)) by.set(it.pi, []); by.get(it.pi).push(it); });
+  MITEMS.forEach(it => { if (!by.has(it.pi)) by.set(it.pi, []); by.get(it.pi).push(it); });
   return Array.from(by.entries()).map(([pi, its]) => ({pi: pi, its: its, g: Math.min(...its.map(it => it.g)),
                                                        done: its.every(it => CHECKS.includes(it.id))}));
 }
@@ -165,13 +209,13 @@ function todayHtml() {
   const t0 = new Date().setHours(0, 0, 0, 0), ct = NOTES._ct || {};
   const hm = ms => { const d = new Date(Number(ms)); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
   const open = [], done = [];
-  P.forEach((p, pi) => core(p) && noteItems(p.chart).forEach(x => {   // other-department (x) patients: 總值 mode only
+  modeSet(false).forEach(pi => noteItems(P[pi].chart).forEach(x => {   // the current mode's patients only
     if (!x.t) return;
     if (!x.done) open.push({pi: pi, text: x.t});
     else if (Number(x.dt) >= t0) done.push({pi: pi, text: x.t, t: Number(x.dt)});
   }));
-  ITEMS.forEach(it => { if (CHECKS.includes(it.id) && Number(ct[it.id]) >= t0) done.push({pi: it.pi, text: it.txt, t: Number(ct[it.id])}); });
-  const priOpen = ITEMS.filter(it => !CHECKS.includes(it.id)).length;
+  MITEMS.forEach(it => { if (CHECKS.includes(it.id) && Number(ct[it.id]) >= t0) done.push({pi: it.pi, text: it.txt, t: Number(ct[it.id])}); });
+  const priOpen = MITEMS.filter(it => !CHECKS.includes(it.id)).length;
   done.sort((a, b) => b.t - a.t);
   const who = pi => `<b>${esc(P[pi].bed)} ${esc(P[pi].name)}</b>`;
   let h = `<div class="today"><div class="tdy-h"><span>今日</span><small>待做 ${open.length} · 優先未勾 ${priOpen} · 今天完成 ${done.length}</small></div>`;
@@ -181,7 +225,9 @@ function todayHtml() {
 }
 function renderPri() {
   const el = $('#pri');
-  if (!ITEMS.length) { el.innerHTML = todayHtml() + '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
+  const me = modeEmpty();
+  if (me) { el.innerHTML = me; return; }
+  if (!MITEMS.length) { el.innerHTML = todayHtml() + '<div class="empty">目前沒有需要優先處理的項目<small>門檻見「⋯」選單的「優先門檻」</small></div>'; return; }
   const groups = patientGroups(), open = groups.filter(x => !x.done), done = groups.filter(x => x.done);
   /* row: [✓] | bed / name / chart + attending | chips: 生命徵象 (g1) first, then the other colour blocks in fixed order, every row the same */
   const row = x => { const p = P[x.pi] || {}, its = x.its.slice().sort((a, b) => a.g - b.g);
@@ -207,50 +253,43 @@ function togglePatient(pi) {
   return saveChecks();
 }
 
-const drKey = p => String(p.dr || p.vs || '');
 function renderAll() {
   const terms = splitTerms(st.q), m = st.mode;
-  $('#mode').innerHTML = MODES.map(([k, n]) => `<button type="button" class="${m === k ? 'on' : ''}" data-mode="${k}">${n}</button>`).join('');
-  $('#zone').style.display = m === 'second' ? '' : 'none';
-  $('#drq').style.display = m === 'second' ? '' : 'none';
-  $('#nhd').style.display = m === 'night' ? '' : 'none';
-  const drs = m === 'second' ? splitTerms(st.dq) : [];
-  if (m === 'second') $('#zone').innerHTML = [U.zi, U.zo].map(z => `<button class="${st.zone === z && !drs.length ? 'on' : ''}" data-z="${z}">${z} ${P.filter(p => core(p) && p.zone === z).length}</button>`).join('');
-  const NI = m === 'night' ? nightItems(P, D && D.stamp) : null;
-  if (m === 'night') $('#nhd').innerHTML = `<b>總值警示</b> ${esc(nightHelp().join(' · '))}<small>含 MO、HEMA 與 META、CM、NEUR、CV、GI、GM、IMRH、INF（其他內科只在總值夜 17·21·01·05 點更新${P.some(p => !core(p)) ? '' : '，目前這份資料沒有'}）。僅計 24 小時內的數值；資料每 4 小時更新（01·05·09·13·17·21 點）· 目前資料 ${esc(shortStamp(clip(D && D.stamp)))}）</small>`;
-  const hay = p => (p.bed + p.chart + p.name + p.dept + (p.vs || '') + (p.dr || '')).replace(/\s+/g, '').toLowerCase();
-  st.idx = P.map((p, i) => i).filter(i => {
-    const p = P[i];
-    if (m !== 'night' && !core(p)) return false;
-    if (!matchAny(hay(p), terms)) return false;
-    if (m === 'second') return drs.length ? drMatch(p, drs) : p.zone === st.zone;   // 章號 given: those attendings in both zones
-    if (m === 'night') return !!NI[i];
-    return true;
-  });
-  /* plain: one group per attending key (stamp number, else name); the group label is the name seen most often for that key */
+  renderMbar();
+  $('#allh').textContent = `${modeOf(m)[1]} ${modeOf(m)[2]} · 全部${U.pt}`;
+  /* one search field for every mode: inside the mode's set (mode B: both zones while a query is typed) */
+  st.idx = modeSet(terms.length > 0).filter(i => searchMatch(P[i], terms));
+  const me = modeEmpty();
+  if (me) { st.idx = []; $('#cards').innerHTML = me; return; }
+  /* lite: one group per attending key (stamp number, else name); the group label is the name seen most often for that key */
   const lab = {}, cnt = {};
-  if (m === 'plain') {
+  if (m === 'lite') {
     const tally = {};
     st.idx.forEach(i => { const p = P[i], k = drKey(p), n = String(p.vs || p.dr || '（未填主治）'); cnt[k] = (cnt[k] || 0) + 1; const t = tally[k] = tally[k] || {}; t[n] = (t[n] || 0) + 1; });
     Object.keys(tally).forEach(k => { lab[k] = Object.entries(tally[k]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0]; });
     st.idx.sort((a, b) => { const ka = drKey(P[a]), kb = drKey(P[b]); return lab[ka].localeCompare(lab[kb], 'zh-Hant') || ka.localeCompare(kb) || cmpWard(P[a], P[b]) || a - b; });
   }
   else st.idx.sort((a, b) => cmpWard(P[a], P[b]) || a - b);   // 第二 → 急診 → 第一 大樓, high ward first
-  if (!st.idx.length) { $('#cards').innerHTML = `<div class="empty">${m === 'night' && !terms.length ? '目前沒有總值警示' : `沒有符合的${U.pt}`}</div>`; return; }
+  /* consult: requests whose chart is not in this payload are still listed (as plain lines) so none is missed */
+  const inP = new Set(P.map(p => String(p.chart == null ? '' : p.chart).trim()));
+  const orphan = m === 'consult' && !terms.length ? consList().filter(c => !inP.has(String(c && typeof c === 'object' ? c.chart : c).trim())) : [];
+  const orphanHtml = orphan.length ? `<div class="sec">不在名單內的會診 ${orphan.length}</div>` + orphan.map(c => { const o = c && typeof c === 'object' ? c : {chart: c};
+    return `<div class="cso"><b>${esc(o.chart)}</b><span>${esc([o.dept, o.from].filter(Boolean).join(' · '))}</span><small>${esc([o.asked, o.req].filter(Boolean).join(' · '))}</small></div>`; }).join('') : '';
+  if (!st.idx.length) { $('#cards').innerHTML = `<div class="empty">沒有符合的${U.pt}</div>` + orphanHtml; return; }
   const by = {};
-  if (NI) Object.keys(NI).forEach(k => { by[k] = NI[k]; });
-  else ITEMS.forEach(it => { (by[it.pi] = by[it.pi] || []).push(it); });
+  ITEMS.forEach(it => { (by[it.pi] = by[it.pi] || []).push(it); });
   let h = '', lastDr = null;
   st.idx.forEach(i => {
     const p = P[i];
-    if (m === 'plain' && drKey(p) !== lastDr) { lastDr = drKey(p); h += `<div class="vh">${esc(lab[lastDr])}<span>${esc(p.dr || '')}</span><em>${cnt[lastDr]}</em></div>`; }
+    if (m === 'lite' && drKey(p) !== lastDr) { lastDr = drKey(p); h += `<div class="vh">${esc(lab[lastDr])}<span>${esc(p.dr || '')}</span><em>${cnt[lastDr]}</em></div>`; }
     const all = by[i] || [], have = new Set(all.map(x => x.key));
     const chips = all.filter(x => x.key !== 'CRIT' && x.key !== 'NEW').map(chipHtml).join('');
-    const mild = m === 'night' ? [] : (Array.isArray(p.labs) ? p.labs : []).filter(l => l && l.abn && !have.has(l.l)).map(l => `${esc(l.l)} ${esc(labText(l))}${labArrow(l.l, l.v)}`);
+    const mild = (Array.isArray(p.labs) ? p.labs : []).filter(l => l && l.abn && !have.has(l.l)).map(l => `${esc(l.l)} ${esc(labText(l))}${labArrow(l.l, l.v)}`);
     const r2 = chips + (mild.length ? `<span class="mild">${mild.slice(0, 3).join(' · ')}${mild.length > 3 ? ' +' + (mild.length - 3) : ''}</span>` : '');
-    h += `<div class="pr" role="button" tabindex="0" data-i="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="id">${esc(p.chart)}</span><span class="sp"></span>${p.x ? `<span class="tag t-DEPT">${esc(p.dept)}</span>` : ''}${tags(p)}</div>${r2 ? `<div class="r2">${r2}</div>` : ''}</div>`;
+    const dept = !isMH(p) && p.dept ? `<span class="tag t-DEPT">${esc(p.dept)}</span>` : '';   // other internal-medicine departments
+    h += `<div class="pr" role="button" tabindex="0" data-i="${i}"><div class="r1"><span class="bed">${esc(p.bed)}</span><span class="nm">${esc(p.name)}</span><span class="id">${esc(p.chart)}</span><span class="sp"></span>${dept}${tags(p)}</div>${r2 ? `<div class="r2">${r2}</div>` : ''}</div>`;
   });
-  $('#cards').innerHTML = h;
+  $('#cards').innerHTML = h + orphanHtml;
 }
 
 /* ---- tick state: memory copy CHECKS, stored encrypted (crypto.js sealChecks) under a subkey of the login key ---- */
@@ -446,7 +485,7 @@ function renderPend(i) {
 function renderDetail(i, from) {
   closeNote();   // leave the previous patient's checklist (commit + stop recording)
   const p = P[i];
-  if (from) { st.from = from; st.order = from === 'pri' ? patientsInOrder(ITEMS) : st.idx.slice(); }
+  if (from) { st.from = from; st.order = from === 'pri' ? patientsInOrder(MITEMS) : st.idx.slice(); }
   st.cur = st.order.indexOf(i); hist('#p' + i); stripSel = null; st.labMode = false; st.labSel = new Set(); closeLab();
   $('#back').textContent = st.from === 'pri' ? '‹ 優先' : '‹ 全部';
   $('#dt').textContent = `${st.cur + 1} / ${st.order.length}`;
@@ -455,8 +494,12 @@ function renderDetail(i, from) {
   /* IO: day's input / output in ml, the difference in brackets (1000 ml or more = red, as on the HIS handoff page) */
   const io = p.io && p.io.in != null ? `${esc(p.io.in)} / ${esc(p.io.out)} ml <small${Math.abs(Number(p.io.diff)) > 1000 ? ' class="gv"' : ''}>(${Number(p.io.diff) > 0 ? '+' : ''}${esc(p.io.diff)})</small>` : '';
   /* UO: urine output of the day in ml (sql_0035 urine rows only; not the same as the total output above) */
-  const uo = p.uo != null ? `${esc(p.uo)} ml` : '';
-  const props = [[U.chart, esc(p.chart)], ['科別', [esc(p.dept), esc(p.zone)].filter(Boolean).join(' · ')], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['體重', wt], ['IO 入/出', io], ['UO 尿量（今日）', uo], ['標記', tags(p)]].filter(r => r[1]);
+  /* the window is calendar-day so far (00:00 to the data time): shown, so a small number just after midnight is not read as oliguria */
+  const uoTo = (/(\d{1,2}):(\d{2})/.exec(String((D && D.stamp) || '')) || [])[0];
+  const uo = p.uo != null ? `${esc(p.uo)} ml <small>（00:00–${esc(uoTo || '資料時間')}）</small>` : '';
+  /* rt = when this record was fetched; a record carried over from the last full run is older than the data stamp */
+  const rti = rtInfo(p.rt, D && D.stamp), rtTxt = rti ? `${esc(rti.txt)}${rti.old ? ' <small class="gv">（上次完整更新）</small>' : ''}` : '';
+  const props = [[U.chart, esc(p.chart)], ['科別', [esc(p.dept), esc(p.zone)].filter(Boolean).join(' · ')], ['主治', esc(p.vs)], ['入院', esc(p.adm)], ['體重', wt], ['IO 入/出', io], ['UO 尿量（今日累計）', uo], ['標記', tags(p)], ['資料時間', rtTxt]].filter(r => r[1]);
   /* memo block at the top (read first, before vital signs): the PC's text (p.spx, from a local .xlsx / .csv,
      read-only) above the hand-written box; open when either has content */
   const spHand = (NOTES[p.chart] || {}).sp || '';
@@ -476,10 +519,17 @@ function renderDetail(i, from) {
   const nMicro = micro.reduce((n, e) => n + objs(e[1]).length, 0);
   /* culture results in one box per kind (細菌 / 病毒 / ...): left = status, right = the full HIS item name */
   /* one culture per row: left = status, right = item. Pending = 執行中; reported = ✅ 完成 (a positive one is highlighted) and a tap opens the result text */
+  /* v66: organisms (o) with colony count under the item, AST (s) as a compact table per organism in the opened part;
+     a no-growth (neg) report is 陰性 and mixed flora (mix) is 混合菌叢 - neither is ever shown as positive */
   const culRow = r => {
-    const it = `<span class="it">${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}</span>`, t = String(r.t == null ? '' : r.t);
-    if (!t || t === '執行中') return `<div class="mr"><span class="st">執行中</span>${it}</div>`;
-    return `<details class="mr"><summary><span class="st">${r.pos ? '<span class="chip g3">✅ 完成</span>' : '✅ 完成'}</span>${it}</summary><div class="mx">${esc(t)}</div></details>`;
+    const cs = culState(r), orgs = microOrgs(r), t = String(r.t == null ? '' : r.t);
+    const og = orgs.filter(o => !/^#/.test(o.name)).map(o => `<span class="org">${esc(o.n)}. ${esc(o.name)}${o.q ? ` <small>${esc(o.q)}</small>` : ''}</span>`).join('');
+    const it = `<span class="it">${esc(r.i)}${Number(r.n) > 1 ? ' ×' + Number(r.n) : ''}${og}</span>`;
+    if (cs === 'run') return `<div class="mr"><span class="st">執行中</span>${it}</div>`;
+    const stt = cs === 'pos' ? '<span class="chip g3">✅ 陽性</span>' : cs === 'neg' ? '<span class="cneg">陰性</span>' : cs === 'mix' ? '<span class="cneg">混合菌叢</span>' : '✅ 完成';
+    const ast = orgs.filter(o => o.ast.length).map(astHtml).join('');
+    const body = ast + (t && t !== '執行中' ? `<div class="mx">${esc(t)}</div>` : '');
+    return body ? `<details class="mr"><summary><span class="st">${stt}</span>${it}</summary>${body}</details>` : `<div class="mr"><span class="st">${stt}</span>${it}</div>`;
   };
   const cbox = (title, n, inner) => inner ? `<div class="cbox"><div class="cbt">${esc(title)}<small>${n}</small></div>${inner}</div>` : '';
   const cx = micro.filter(([, rows]) => objs(rows).length).map(([k, rows]) => cbox(k, objs(rows).length, `<div class="cm">${objs(rows).map(culRow).join('')}</div>`)).join('') + (p.fw ? `<div class="row">${mk('Fever work-up?', true)}</div>` : '');
@@ -561,8 +611,12 @@ document.addEventListener('click',e=>{
  if(!P)return;
  const t=e.target;
  const tb=t.closest('[data-tab]');if(tb){showTab(tb.dataset.tab);window.scrollTo(0,0);return}
- const z=t.closest('[data-z]');if(z){st.zone=z.dataset.z;st.dq='';$('#drq').value='';renderAll();return}
- const md=t.closest('[data-mode]');if(md){st.mode=md.dataset.mode;saveMode(st.mode);renderAll();window.scrollTo(0,0);return}
+ const pk=t.closest('[data-pick]');if(pk){pickMode(pk.dataset.pick);return}
+ if(t.closest('#mdb')){showModes();return}
+ const z=t.closest('[data-z]');if(z){st.zs=z.dataset.z==='o'?'o':'i';saveZs(st.zs);st.q='';$('#q').value='';refreshMode();renderTabs();renderPri();renderAll();return}
+ if(t.closest('[data-ltog]')){st.ltOpen=!(st.ltOpen==null?!liteTicks().length:st.ltOpen);renderMbar();return}
+ const lk=t.closest('[data-lk]');if(lk){if(st.ltOpen==null)st.ltOpen=true;const k=lk.dataset.lk,cur=liteTicks();setLite(cur.includes(k)?cur.filter(x=>x!==k):cur.concat([k]));return}
+ const la=t.closest('[data-lall]');if(la){if(st.ltOpen==null)st.ltOpen=true;setLite(la.dataset.lall==='1'?attendingList(P).map(a=>a.key):[]);return}
  if(t.closest('[data-labx]')||t.id==='lab'){closeLab();return}
  const lmd=t.closest('[data-labmode]');if(lmd){st.labMode=!st.labMode;if(!st.labMode)st.labSel=new Set();renderLabCard();return}
  const lgo=t.closest('[data-labgo]');if(lgo){openLab([...st.labSel]);return}
@@ -580,17 +634,30 @@ document.addEventListener('click',e=>{
 document.addEventListener('contextmenu',e=>{if(e.target.closest&&e.target.closest('.lc[data-lab]'))e.preventDefault()});
 document.addEventListener('dblclick',e=>{const l=e.target.closest&&e.target.closest('.lc[data-lab]');if(l&&P&&!st.labMode)openLab([l.dataset.lab])});
 $('#q').addEventListener('input',e=>{if(!P)return;st.q=e.target.value;renderAll()});
-$('#drq').addEventListener('input',e=>{if(!P)return;st.dq=e.target.value;renderAll()});
 $('#back').onclick=closeDetail;
 /* tick rows and patient rows are plain elements: Enter / Space on a focused one acts like a tap */
-document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.ck,.pr')){e.preventDefault();e.target.click()}});
+document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.ck,.pr,.ltr')){e.preventDefault();e.target.click()}});
 window.addEventListener('keydown',e=>{if($('#detail').style.display!=='block')return;if(e.key==='ArrowLeft')go(-1);if(e.key==='ArrowRight')go(1);if(e.key==='Escape')closeDetail()});
 
 /* ================= screens ================= */
 function show(id) {
-  ['#boot', '#setup', '#pending', '#login', '#list'].forEach(s => { $(s).style.display = s === id ? '' : 'none'; });
-  $('#foot').style.display = id === '#list' ? 'none' : '';
+  ['#boot', '#setup', '#pending', '#login', '#modes', '#list'].forEach(s => { $(s).style.display = s === id ? '' : 'none'; });
+  $('#foot').style.display = id === '#list' || id === '#modes' ? 'none' : '';
   if (id !== '#pending') stopGrantPoll();
+}
+/* v66 mode picker: shown after every unlock and from the header button; the last chosen mode is highlighted */
+function showModes() {
+  if (!P) return;
+  const last = loadMode();
+  $('#mpk').innerHTML = MODES.map(([k, l, n, s]) => `<button type="button" class="${k === last ? 'on' : ''}" data-pick="${k}"><b>${l}</b><span>${esc(n)}<small>${esc(fmtU(s))}</small></span></button>`).join('');
+  $('#mstamp').textContent = D && D.stamp ? `資料 ${shortStamp(clip(D.stamp))} · ${P.length} 人` : '';
+  show('#modes'); window.scrollTo(0, 0);
+}
+function pickMode(m) {
+  if (!P || !MODE_IDS.includes(m)) return;
+  st.mode = m; saveMode(m); st.q = ''; $('#q').value = ''; st.ltOpen = null;
+  refreshMode();
+  show('#list'); renderPri(); renderAll(); showTab(st.tab === 'all' ? 'all' : 'pri'); renderSys(); window.scrollTo(0, 0);
 }
 /* retry = show the 「重試」 button (no data yet) */
 function showBoot(text, retry) { $('#bt').textContent = text; $('#bretry').style.display = retry ? '' : 'none'; show('#boot'); }
@@ -626,18 +693,12 @@ function statusAgeH() {
   if (!m) return null;
   return (Date.now() - new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime()) / 3600e3;
 }
-/* duty day if the phone's own date is Sat/Sun, or the PC says so (holidays come from the PC's holiday file) */
-function isDutyDay() {
-  const wd = new Date().getDay();
-  return wd === 0 || wd === 6 || !!(STATUS && STATUS.duty_day === true);
-}
 /* status line parts (HTML): computer status, plus "PC silent" / holiday-file warnings */
 function statusParts() {
   if (!STATUS || !STATUS.at) return [];
   const age = statusAgeH();
   const s = STATUS, out = [`<span class="pc ${age != null && age >= STALE_H ? 'off' : s.ok ? '' : 'bad'}">電腦 ${esc(shortStamp(clip(s.at)))} ${s.ok ? '正常' : '異常'}${s.msg ? '：' + esc(clip(s.msg, 80)) : ''}</span>`];
   if (age != null && age >= STALE_H) out.push(`<span class="note">電腦已超過 ${Math.floor(age)} 小時未回報，可能未開機或程式已關閉</span>`);
-  if (s.hol_warn === true) out.push(`<span class="note">假日檔讀取失敗，只依週六日執行</span>`);
   return out;
 }
 /* err:"auth" = the server read the access list and this key is not on it (definite rejection) */
@@ -660,14 +721,19 @@ function loginSys() {
 function renderMeta() {
   if (!D) return;
   const age = statusAgeH(), sAge = stampAgeH(D.stamp, Date.now()), busy = REQ_SENDING || !!POLL, parts = [];
-  parts.push(`<span${sAge != null && sAge > 12 ? ' class="stale"' : ''}>資料 ${esc(shortStamp(clip(D.stamp)))}（${P.filter(core).length}人${P.some(p => !core(p)) ? `＋其他內科 ${P.filter(p => !core(p)).length}` : ''}）</span>`);
+  const nMH = P.filter(isMH).length, nOther = P.length - nMH;
+  parts.push(`<span${sAge != null && sAge > 12 ? ' class="stale"' : ''}>資料 ${esc(shortStamp(clip(D.stamp)))}（${nOther ? `MO/HEMA ${nMH}＋其他內科 ${nOther}` : P.length + '人'}）</span>`);
   if (STATUS && STATUS.at) parts.push(`<span class="pc ${age != null && age >= STALE_H ? 'off' : STATUS.ok ? '' : 'bad'}">電腦 ${esc(shortStamp(clip(STATUS.at)))}</span>`);
-  if (isDutyDay()) parts.push(`<button id="rq" class="rq" type="button"${busy ? ' disabled' : ''}>${busy ? '等待更新…' : '請更新'}</button>`);
+  parts.push(`<button id="rq" class="rq" type="button"${busy ? ' disabled' : ''}>${busy ? '等待更新…' : '請更新'}</button>`);   // every day (v66: no duty-day gating)
   $('#meta').innerHTML = parts.join('');
   const lines = [];
+  /* the other departments refresh with the full run only (Q4H): say how old they are when the data stamp is newer */
+  if (nOther && typeof D.full_stamp === 'string' && D.full_stamp && D.full_stamp !== D.stamp && (st.mode === 'im' || st.mode === 'consult')) {
+    const fa = stampAgeH(D.full_stamp, Date.now());
+    lines.push(`其他內科資料 ${shortStamp(clip(D.full_stamp))}${fa != null && fa >= 1 ? `（${Math.floor(fa)} 小時前）` : ''}`);
+  }
   if (STATUS && STATUS.ok === false && STATUS.msg) lines.push('電腦回報：' + clip(STATUS.msg, 80));
-  if (STATUS && STATUS.hol_warn === true) lines.push('假日檔讀取失敗，只依週六日執行');
-  if (!isDutyDay() && STATUS) lines.push('非' + U.duty + '日');
+  lines.push('排程：' + SCHED);
   if (REQ_MSG) lines.push(REQ_MSG);
   if (AUTH_BAD) lines.push(AUTH_MSG);
   if (NOTE) lines.push(NOTE);
@@ -1190,18 +1256,19 @@ async function start(d) {
   applyUi(D.ui);                                          // wording that is not in the public files rides in the encrypted payload
   lastAct = Date.now();                                   // the login tap counts as activity (the listener only runs once D is set)
   st = newSt(); BANNER_CTX = {badStampIgnored: false, newKeyUnopenable: false, pending: false};
-  $('#q').value = ''; $('#drq').value = '';
+  $('#q').value = '';
   REQ_MSG = '';
-  ITEMS = priorityItems(coreP());
+  ITEMS = priorityItems(P);
   const ticks = await loadChecks();
   if (!D) return;                                         // locked while the ticks were loading
   CHECKS = pruneChecks(ticks, ITEMS);                     // against the items as they are now (a sync may have replaced the data meanwhile)
   NOTES = await loadNotes();                              // 待辦 notes: sealed with the same keys as the ticks
   if (!D) return;                                         // locked while the notes were loading
-  show('#list');
-  showTab('pri');
+  refreshMode();                                          // the Lite ticks are in the notes
+  st.tab = 'pri';
+  renderTabs(); renderPri(); renderAll();
+  showModes();                                            // v66: pick a mode after every unlock
   renderSys();
-  window.scrollTo(0, 0);
   bump();
 }
 
@@ -1220,7 +1287,7 @@ function lock() {
   if (AUTH) AUTH.fill(0);
   KEYS = null; KEK = null; AUTH = null; USER = null; LOGIN_KEY = null; D = null; P = null; PENDING = null;
   closeLab(); applyUi(null);                                          // wording goes back to the neutral labels with the data
-  ITEMS = []; CHECKS = []; REQ_SENDING = false;
+  ITEMS = []; MITEMS = []; CHECKS = []; REQ_SENDING = false;
   NOTES = {}; UNDO = null; NOTE_I = -1; SW0 = null; clearTimeout(NOTE_T); NOTE_T = null; SW_CHART = null;
   if (REC) { try { REC.stop(); } catch (e) { /* ignore */ } }   // onstop sees the new session and keeps nothing
   REC = null; RECCHUNKS = [];
@@ -1229,9 +1296,9 @@ function lock() {
   st = newSt();
   // the checklist / recording elements sit inside #db while a patient page is open: bring them home before #db is wiped
   if ($('#np') && $('#npd') && $('#npbar')) $('#np').append($('#npd'), $('#npbar'));
-  ['#pri', '#cards', '#zone', '#mode', '#nhd', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#npd', '#npbar', '#printdoc'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
+  ['#pri', '#cards', '#zone', '#lite', '#mpk', '#mstamp', '#allh', '#mdb', '#db', '#meta', '#nline', '#banner', '#toast', '#dtx', '#npd', '#npbar', '#printdoc'].forEach(s => { $(s).innerHTML = ''; $(s).textContent = ''; });
   document.body.style.overflow = '';
-  $('#q').value = ''; $('#drq').value = ''; $('#lp').value = ''; $('#lu').value = ''; REQ_MSG = '';
+  $('#q').value = ''; $('#lp').value = ''; $('#lu').value = ''; REQ_MSG = '';
   $('.tb [data-tab=pri]').textContent = '優先'; $('.tb [data-tab=all]').textContent = '全部';
   ['#menu', '#dlg', '#toast'].forEach(s => $(s).classList.remove('on'));
   $('#detail').style.display = 'none'; document.body.style.overflow = ''; hist('');
@@ -1498,7 +1565,7 @@ const impKey = s => String(s || '').toUpperCase().replace(/[－–—_]/g, '-').
 function importSpecial(text) {
   if (!P || !P.length) return {ok: 0, dup: 0, miss: 0, rows: 0};
   const byKey = new Map();
-  P.filter(core).forEach(p => { [p.chart, p.bed].forEach(k => { const x = impKey(k); if (x && !byKey.has(x)) byKey.set(x, p); }); });
+  P.forEach(p => { [p.chart, p.bed].forEach(k => { const x = impKey(k); if (x && !byKey.has(x)) byKey.set(x, p); }); });
   const rows = parseImportRows(text); let ok = 0, dup = 0, miss = 0, hdr = 0;
   const touched = new Set();
   rows.forEach(r => {
@@ -1603,8 +1670,11 @@ function docGroups(kind) {
     GROUPS.forEach(g => { const rows = gs.filter(x => x.g === g.g).sort((a, b) => a.pi - b.pi).map(x => Object.assign(docRow(P[x.pi] || {}), {chk: !!x.done}));
       if (rows.length) out.push({h: String(g.name), rows: rows}); });
   } else {
-    const CPs = P.filter(core), zs = [U.zi, U.zo].concat(Array.from(new Set(CPs.map(p => p.zone))).filter(z => z !== U.zi && z !== U.zo));
-    zs.forEach(z => { const rows = CPs.filter(p => p.zone === z).map(p => Object.assign(docRow(p), {flags: [p.dnr ? 'DNR' : '', p.end ? 'EOL' : '', p.crit ? 'Critical' : ''].filter(Boolean)}));
+    /* v66: the current mode's set; MO/HEMA grouped by zone (A then B), the other departments by department code.
+       Mode B prints both zones (modeSet(true)), as the A4 list always did - not only the zone picked on screen */
+    const CPs = modeSet(true).map(i => P[i]), grp = p => String(p.zone || p.dept || '');
+    const zs = [U.zi, U.zo].concat(Array.from(new Set(CPs.map(grp))).filter(z => z !== U.zi && z !== U.zo));
+    zs.forEach(z => { const rows = CPs.filter(p => grp(p) === z).map(p => Object.assign(docRow(p), {flags: [p.dnr ? 'DNR' : '', p.end ? 'EOL' : '', p.crit ? 'Critical' : ''].filter(Boolean)}));
       if (rows.length) out.push({h: String(z || '–'), rows: rows}); });
   }
   return out;

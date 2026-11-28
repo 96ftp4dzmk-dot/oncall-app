@@ -33,14 +33,58 @@
     const l = p.labs.find(x => x && typeof x === 'object' && x.l === label);
     return l ? parseNum(l.v) : null;
   }
+  /* first positive culture entry; a no-growth ("neg") or mixed-flora ("mix") report never counts as positive */
   function firstPos(p) {
     if (!p.micro || typeof p.micro !== 'object') return null;
     for (const rows of Object.values(p.micro)) {
       if (!Array.isArray(rows)) continue;
-      const r = rows.find(x => x && x.pos === true);
+      const r = rows.find(x => x && typeof x === 'object' && culState(x) === 'pos');
       if (r) return r;
     }
     return null;
+  }
+  /* ---- v66 culture entries: {i, t, pos, n} plus optional o (organisms), s (AST per organism number), neg, mix ---- */
+  const str = v => String(v == null ? '' : v).trim();
+  const orgList = r => (r && Array.isArray(r.o) ? r.o : []).filter(o => o && typeof o === 'object' && str(o.name));
+  /* 'run' (pending) | 'neg' (no growth) | 'mix' (mixed / normal flora) | 'pos' | 'done' (reported, not positive) */
+  function culState(r) {
+    if (!r || typeof r !== 'object') return 'run';
+    if (r.neg === true) return 'neg';
+    if (r.mix === true) return 'mix';
+    if (r.pos === true) return 'pos';
+    const t = str(r.t);
+    if (!t || t === '執行中') return orgList(r).length ? 'pos' : 'run';
+    return orgList(r).length ? 'pos' : 'done';
+  }
+  const SIR = v => { const s = str(v).toUpperCase(); return s === 'S' || s === 'I' || s === 'R' ? s : ''; };
+  /* organisms with their AST rows: [{n: '1', name, q, ast: [[antibiotic, 'S'|'I'|'R'|'', mic]]}], in organism order;
+   * AST rows for a number with no organism entry are kept under "#n" so nothing reported is dropped */
+  function microOrgs(r) {
+    const out = [], byN = new Map();
+    orgList(r).forEach((o, k) => {
+      const n = str(o.n) || String(k + 1);
+      if (byN.has(n)) return;
+      const e = {n: n, name: str(o.name), q: str(o.q), ast: []};
+      byN.set(n, e); out.push(e);
+    });
+    const s = r && r.s && typeof r.s === 'object' && !Array.isArray(r.s) ? r.s : {};
+    Object.keys(s).forEach(n => {
+      const rows = (Array.isArray(s[n]) ? s[n] : []).filter(x => Array.isArray(x) && str(x[0]))
+        .map(x => [str(x[0]), SIR(x[1]), str(x[2])]);
+      if (!rows.length) return;
+      let e = byN.get(str(n));
+      if (!e) { e = {n: str(n), name: '#' + str(n), q: '', ast: []}; byN.set(e.n, e); out.push(e); }
+      e.ast = e.ast.concat(rows);
+    });
+    return out;
+  }
+  const escH = s => String(s == null ? '' : s).replace(/[‪-‮⁦-⁩]/g, '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  /* compact AST table of one microOrgs() organism: antibiotic | S/I/R (class R red, I amber, S plain) | MIC (small) */
+  function astHtml(o) {
+    if (!o || !Array.isArray(o.ast) || !o.ast.length) return '';
+    /* the S/I/R value lands in a class attribute: only S / I / R survive, even when the caller skipped microOrgs() */
+    const rows = o.ast.filter(Array.isArray).map(a => [a[0], SIR(a[1]), a[2]]).map(a => `<tr><td>${escH(a[0])}</td><td class="v${a[1] ? ' ' + a[1] : ''}">${escH(a[1])}</td><td>${a[2] ? `<small>${escH(a[2])}</small>` : ''}</td></tr>`).join('');
+    return `<table class="ast"><caption>${escH(o.n)}. ${escH(o.name)}${o.q ? ` <small>${escH(o.q)}</small>` : ''}</caption>${rows}</table>`;
   }
 
   /* rule table, in display order within a patient: {key, g, help (one line for the 「優先門檻」 sheet), f(patient) -> text | null} */
@@ -51,7 +95,8 @@
     {key: 'RR', g: 1, help: 'RR > 30', f: p => { const n = lastOf(p.ser, 3); return n != null && n > 30 ? `RR ${n}` : null; }},
     {key: 'SpO2', g: 1, help: 'SpO₂ < 90', f: p => { const n = lastOf(p.ser, 6); return n != null && n < 90 ? `SpO₂ ${n}%` : null; }},
     {key: 'ANC', g: 2, help: 'ANC < 500', f: p => { const n = labNum(p, 'ANC'); return n != null && n < 500 ? `ANC ${n}` : null; }},
-    {key: 'CX', g: 3, help: '培養：7 天內有陽性', f: p => { const r = firstPos(p); return r ? ('Cx+ ' + String(r.t == null ? '' : r.t).slice(0, 20)).trimEnd() : null; }},
+    {key: 'CX', g: 3, help: '培養：7 天內有陽性', f: p => { const r = firstPos(p); if (!r) return null; const o = orgList(r);
+      return ('Cx+ ' + (o.length ? str(o[0].name) : String(r.t == null ? '' : r.t)).slice(0, 20)).trimEnd(); }},
     {key: 'Cre', g: 4, help: 'Cre > 3', f: p => { const n = labNum(p, 'Cre'); return n != null && n > 3 ? `Cre ${n}` : null; }},
     {key: 'K', g: 5, help: 'K < 3.0 或 > 6.0', f: p => { const n = labNum(p, 'K'); return n != null && (n < 3.0 || n > 6.0) ? `K ${n}` : null; }},
     {key: 'Na', g: 5, help: 'Na < 125 或 > 155', f: p => { const n = labNum(p, 'Na'); return n != null && (n < 125 || n > 155) ? `Na ${n}` : null; }},
@@ -143,6 +188,73 @@
     const dr = String(p && p.dr != null ? p.dr : '').replace(/\s+/g, '').toLowerCase(), vs = String(p && p.vs != null ? p.vs : '').replace(/\s+/g, '').toLowerCase();
     return terms.some(t => (dr && dr === t) || (t.length >= 2 && vs && vs.includes(t)));
   };
+  /* ---- v66 one search field: a term shaped like an attending stamp (4 digits + 1 letter, e.g. 1234A) matches p.dr exactly;
+   * every other term is a substring of bed + chart + name + dept + attending name + stamp ---- */
+  const STAMP_RE = /^\d{4}[a-z]$/i;
+  const isStamp = t => STAMP_RE.test(String(t == null ? '' : t).trim());
+  const low = v => String(v == null ? '' : v).replace(/\s+/g, '').toLowerCase();
+  const searchHay = p => low(p.bed) + low(p.chart) + low(p.name) + low(p.dept) + low(p.vs) + low(p.dr);
+  function searchMatch(p, terms) {
+    if (!p || typeof p !== 'object') return false;
+    if (!terms || !terms.length) return true;
+    const hay = searchHay(p), dr = low(p.dr);
+    return terms.some(t => isStamp(t) ? (!!dr && dr === low(t)) : hay.includes(low(t)));
+  }
+
+  /* ---- v66 modes: im = 內科總值 (every record), second = 次專科二線 (MO/HEMA, one zone), lite = 平日 Lite (MO/HEMA of the
+   * ticked attendings), consult = 會診 (records whose chart is in payload "cons"). Pure: the caller passes the choices. ---- */
+  const MODE_IDS = ['im', 'second', 'lite', 'consult'];
+  /* stored value -> mode id; v60 values: night -> im, second -> second, plain -> '' (= nothing chosen yet, show the picker) */
+  const migrateMode = v => v === 'night' ? 'im' : MODE_IDS.includes(v) ? v : '';
+  const isMH = p => !!p && typeof p === 'object' && /^(MO|HEMA)$/i.test(String(p.dept == null ? '' : p.dept).trim());
+  /* attending key: stamp, else the name ('' when neither is filled) */
+  const drKey = p => String((p && (p.dr || p.vs)) || '').trim();
+  /* charts named in payload "cons" (items {chart, ...}; a bare string is accepted too) */
+  function consCharts(cons) {
+    const s = new Set();
+    (Array.isArray(cons) ? cons : []).forEach(c => { const ch = c && typeof c === 'object' ? c.chart : c; if (ch != null && String(ch).trim()) s.add(String(ch).trim()); });
+    return s;
+  }
+  /* indexes of P in the mode's set (P order). o = {zone: zone word, ticks: attending keys, cons: payload cons,
+   * searching: a query is typed (mode second then covers both zones)} */
+  function modeIdx(P, mode, o) {
+    o = o || {};
+    const ticks = new Set(Array.isArray(o.ticks) ? o.ticks.map(String) : o.ticks instanceof Set ? Array.from(o.ticks, String) : []);
+    const charts = mode === 'consult' ? consCharts(o.cons) : null;
+    const out = [];
+    (Array.isArray(P) ? P : []).forEach((p, i) => {
+      if (!p || typeof p !== 'object') return;
+      let ok;
+      if (mode === 'second') ok = isMH(p) && (!!o.searching || (!!o.zone && p.zone === o.zone));
+      else if (mode === 'lite') ok = isMH(p) && ticks.has(drKey(p));
+      else if (mode === 'consult') ok = charts.has(String(p.chart == null ? '' : p.chart).trim());
+      else ok = true;
+      if (ok) out.push(i);
+    });
+    return out;
+  }
+  /* distinct attendings of the MO/HEMA records for the Lite tick list: [{key, name, dr, n}] sorted by name, then key.
+   * name = the attending name seen most often for that key */
+  function attendingList(P) {
+    const by = new Map();
+    (Array.isArray(P) ? P : []).forEach(p => {
+      if (!isMH(p)) return;
+      const k = drKey(p), nm = String(p.vs || '').trim() || String(p.dr || '').trim() || '（未填主治）';
+      const e = by.get(k) || {key: k, dr: String(p.dr || '').trim(), n: 0, names: {}};
+      e.n++; e.names[nm] = (e.names[nm] || 0) + 1; if (!e.dr && p.dr) e.dr = String(p.dr).trim();
+      by.set(k, e);
+    });
+    return Array.from(by.values()).map(e => ({key: e.key, dr: e.dr, n: e.n,
+      name: Object.entries(e.names).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0]}))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant') || a.key.localeCompare(b.key));
+  }
+  /* per-record fetch time "rt" (ISO minute, "T" or space) -> {txt: "11/28 09:05", old: older than the data stamp by 1 h+} */
+  function rtInfo(rt, stamp) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(String(rt == null ? '' : rt));
+    if (!m) return null;
+    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]), now = stampNaiveMs(stamp);
+    return {txt: `${m[2]}/${m[3]} ${m[4]}:${m[5]}`, old: now != null && now - ms >= 3600e3};
+  }
 
   /* series rows that can be drawn: arrays whose time is a finite number inside [t0, t1] */
   const cleanSer = (ser, t0, t1) => (Array.isArray(ser) ? ser : []).filter(r => Array.isArray(r) && finite(r[0]) != null && r[0] >= t0 && r[0] <= t1);
@@ -214,7 +326,8 @@
     return null;
   }
 
-  const api = {GROUPS, NIGHT_RULES, nightItems, nightHelp, stampNaiveMs, splitTerms, matchAny, drMatch, priorityHelp, cleanSer, shortStamp, priorityItems, toggleId, pruneChecks, splitItems, patientsInOrder, cmpWard, bldRank, setInner, labArrow, stripSpec, stripY, stampAgeH, pickBanner};
+  const api = {MODE_IDS, migrateMode, isMH, drKey, consCharts, modeIdx, attendingList, isStamp, searchMatch, rtInfo, culState, microOrgs, astHtml,
+               GROUPS, NIGHT_RULES, nightItems, nightHelp, stampNaiveMs, splitTerms, matchAny, drMatch, priorityHelp, cleanSer, shortStamp, priorityItems, toggleId, pruneChecks, splitItems, patientsInOrder, cmpWard, bldRank, setInner, labArrow, stripSpec, stripY, stampAgeH, pickBanner};
   Object.assign(G, api);
   G.LG = api;
 })(self);

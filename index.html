@@ -106,7 +106,7 @@ button{font-family:inherit}
 .seg{display:flex;margin:10px 20px 6px;padding:3px;border-radius:11px;background:var(--seg)}
 .seg button{flex:1;min-height:44px;border:0;background:none;color:var(--ink);padding:0;border-radius:8px;font:500 14px var(--sans)}
 .seg button.on{background:var(--surf);box-shadow:0 1px 3px #0002}
-#q,#drq{display:block;width:calc(100% - 40px);margin:4px 20px 6px;padding:10px 12px;border:0;border-radius:10px;background:var(--seg);color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
+#q{display:block;width:calc(100% - 40px);margin:4px 20px 6px;padding:10px 12px;border:0;border-radius:10px;background:var(--seg);color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
 .sec{padding:14px 20px 4px;font:600 12px var(--sans);letter-spacing:.06em;color:var(--sub)}
 .pr{padding:12px 20px;border-bottom:1px solid var(--line2);cursor:pointer}
 .pr .r1{display:flex;align-items:center;gap:8px}
@@ -228,10 +228,7 @@ details.tg ul{margin:0;padding-left:16px}details.tg li{margin:3px 0}
 .tb{border-top-color:var(--line2)}
 .nav{border-bottom-color:transparent}
 .seg{margin:10px 14px 8px;border-radius:14px}.seg button{border-radius:11px}
-#q,#drq{width:calc(100% - 28px);margin:4px 14px 8px;border-radius:14px}
-.seg.mode button{min-height:38px;font-weight:600}
-.nhd{margin:2px 14px 8px;padding:8px 12px;border-radius:12px;background:var(--seg);font:13px/1.5 var(--sans);color:var(--ink)}
-.nhd b{margin-right:4px}.nhd small{display:block;color:var(--sub);font-size:11.5px}
+#q{width:calc(100% - 28px);margin:4px 14px 8px;border-radius:14px}
 .vh{display:flex;align-items:baseline;gap:8px;margin:14px 14px 4px;padding-bottom:4px;border-bottom:1px solid var(--line);font:600 14px var(--sans);color:var(--ink)}
 .vh span{color:var(--sub);font:12px var(--mono, monospace)}.vh em{margin-left:auto;font-style:normal;color:var(--sub);font-size:12px}
 .bnr{margin:8px 14px 0;border-radius:14px}
@@ -285,7 +282,9 @@ details.tg .in{padding:0 0 12px 8px}
 .ck .pchips .chip{font-size:12px;padding:1px 6px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.5}
 #npp{margin-left:auto;min-height:40px;padding:0 14px!important;border:1px solid var(--line)!important;border-radius:999px;background:var(--surf)!important;color:var(--ink)!important;font:500 13px var(--sans)!important}
 #npd .cl li{margin:0;padding:0 4px;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:none;box-shadow:none;min-height:46px}
-#npd .cl .cbx{border-radius:50%}
+/* 待處理: abnormal items (.ck.pk) and to-dos (#npd .cl li) are one flat list - same square box, same indent, chip full width */
+.ck.pk{grid-template-columns:auto minmax(0,1fr);margin:0;padding:0 4px;min-height:46px;border-bottom:1px solid var(--line2)}
+.ck.pk>:not(.cbx){grid-column:2;grid-row:1;justify-self:start}
 .ni{flex:1;min-width:0;height:44px;padding:0;border:0;background:none;color:var(--ink);font:16px var(--sans);outline:none;-webkit-appearance:none}
 .cl li.done .ni{color:var(--sub);text-decoration:line-through}
 .cl li.new .cbx{opacity:.3}
@@ -402,6 +401,47 @@ details.tg .in{padding:0 0 12px 8px}
 .cm .it{overflow-wrap:anywhere}
 .cm .mx{margin:0 0 6px 0;padding:7px 10px;border-radius:8px;font-size:14px;overflow-wrap:anywhere;white-space:pre-wrap;border:1px solid var(--line2);background:var(--surf)}
 .cm .it b.hi{color:var(--cv-solid)}.cm .it small{color:var(--sub);font-size:12px}.cm .it small.ref{display:block}.cm .nl{grid-column:2;color:var(--sub);font-size:11.5px}
+
+/* ---- v66: mode picker, mode button, Lite attending ticks, consult lines, culture organisms + AST ---- */
+#modes{padding-top:calc(9vh + env(safe-area-inset-top))}
+#mpk{display:flex;flex-direction:column;gap:10px;text-align:left}
+#mpk button{display:flex;align-items:center;gap:14px;height:auto;min-height:78px;margin:0;padding:12px 16px;border:1px solid var(--line);border-radius:16px;background:var(--surf);color:var(--ink);text-align:left}
+#mpk button.on{border:2px solid var(--acc);padding:11px 15px}
+#mpk b{flex:none;width:34px;font:600 28px var(--serif);color:var(--acc);text-align:center}
+#mpk span{display:flex;flex-direction:column;font:600 18px var(--sans)}
+#mpk small{margin-top:2px;font:400 12.5px var(--sans);color:var(--sub)}
+.mdb{flex:none;min-height:38px;margin:0 6px 0 auto;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--surf);color:var(--ink);font:500 13px var(--sans);white-space:nowrap}
+.mdb b{color:var(--acc)}.mdb span{color:var(--sub);font-size:11px}
+.mdb:empty{display:none}
+#mbar .seg{margin:8px 14px 4px}
+.lt{margin:8px 14px 4px;border:1px solid var(--line2);border-radius:var(--r);background:var(--surf);overflow:hidden}
+.lth{display:flex;align-items:center;gap:8px;width:100%;min-height:46px;padding:0 12px;border:0;background:none;color:var(--ink);font:600 14px var(--sans);text-align:left}
+.lth small{font-weight:400;color:var(--sub);font-size:12.5px}
+.lth .chev{margin-left:auto;color:var(--sub)}
+.ltr{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px;border-top:1px solid var(--line2);cursor:pointer;user-select:none;-webkit-user-select:none}
+.ltr:active{background:var(--hover)}
+.ltr .ln{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ltr small{color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+.ltr em{margin-left:auto;font-style:normal;color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+.ltr.on .cbx{background:var(--acc);border-color:var(--acc)}
+.ltr.on .cbx::after{content:"";width:35%;height:60%;border:solid #fff;border-width:0 2.2px 2.2px 0;transform:translateY(-12%) rotate(45deg)}
+.ltr0{padding:10px 12px;border-top:1px solid var(--line2);color:var(--sub);font-size:13px}
+.ltb{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--line2)}
+.ltb button{flex:1;min-height:40px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:500 13px var(--sans)}
+.cso{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:10px 20px;border-bottom:1px solid var(--line2);font-size:14px}
+.cso span{color:var(--ink)}.cso small{color:var(--sub);font-size:12px;flex-basis:100%}
+.cm .org{display:block;font-size:13px;font-style:italic}
+.cm .org small{font-style:normal}
+.cneg{color:var(--sub);font-weight:600}
+.ast{width:100%;border-collapse:collapse;margin:2px 0 8px;font-size:13px;font-variant-numeric:tabular-nums}
+.ast caption{text-align:left;padding:2px 0 3px;font-weight:600;font-style:italic}
+.ast caption small{font-style:normal;color:var(--sub);font-weight:400}
+.ast td{padding:3px 8px 3px 0;border-top:1px solid var(--line2);vertical-align:baseline}
+.ast td.v{width:2.2em;text-align:center;font-weight:600}
+.ast td.v.R{color:var(--cv-solid);font-weight:800}
+.ast td.v.I{color:var(--ce-fg);font-weight:700}   /* amber that keeps 4.5:1 on white at 13px (#B7700A was ~3.9:1) */
+.ast td small{color:var(--sub);font-size:11.5px}
+.ast td:last-child{width:5.5em}
 </style></head><body>
 <div id="boot"><img class="logo" src="icon.svg" alt="" width="64" height="64"><p id="bt">載入中…</p><button id="bretry" type="button" class="lnk" style="display:none">重試</button></div>
 
@@ -437,19 +477,19 @@ details.tg .in{padding:0 0 12px 8px}
 <div id="lm" class="msg"></div>
 <div id="lsys"></div></div>
 
+<div id="modes" class="pane" style="display:none"><h2>選擇模式</h2><p class="sub" id="mstamp"></p>
+<div id="mpk"></div></div>
+
 <div id="list" style="display:none">
-  <div class="hd"><h1 class="ttl" id="ttl">優先</h1><button id="mn" class="mn" type="button" aria-label="選單">⋯</button></div>
+  <div class="hd"><h1 class="ttl" id="ttl">優先</h1><button id="mdb" class="mdb" type="button" aria-label="切換模式"></button><button id="mn" class="mn" type="button" aria-label="選單">⋯</button></div>
   <div id="meta" class="meta"></div>
   <div id="nline" class="nline"></div>
   <div id="banner" class="bnr"></div>
+  <div id="mbar"><div class="seg" id="zone" style="display:none"></div><div class="lt" id="lite" style="display:none"></div></div>
   <div id="pri"></div>
   <div id="all" style="display:none">
-    <div class="tdh"><span data-t="{zi}＋{zo} 全部{pt}">A＋B 全部item</span><button class="docb" data-doc="all" type="button">輸出 Doc</button></div>
-    <div class="seg mode" id="mode"></div>
-    <div class="nhd" id="nhd" style="display:none"></div>
-    <div class="seg" id="zone"></div>
-    <input type="search" id="drq" placeholder="主治章號，多位用 / 分隔（例 1234/5678）" autocomplete="off" autocapitalize="characters" spellcheck="false">
-    <input type="search" id="q" placeholder="搜尋 ID-2 / ID-1 / 姓名（可用 / 複選）" data-tp="搜尋 {bed} / {chart} / 姓名（可用 / 複選）" autocomplete="off">
+    <div class="tdh"><span id="allh">全部</span><button class="docb" data-doc="all" type="button">輸出 Doc</button></div>
+    <input type="search" id="q" placeholder="搜尋 ID-2 / ID-1 / 姓名 / 章號（/ 複選）" data-tp="搜尋 {bed} / {chart} / 姓名 / 章號（/ 複選）" autocomplete="off">
     <div id="cards"></div>
   </div>
   <div class="tb"><button type="button" data-tab="pri">優先</button><button type="button" data-tab="all">全部</button></div>
